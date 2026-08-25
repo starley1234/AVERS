@@ -609,6 +609,92 @@ async def get_vectorization_substep(file_id: str, substep: str, page: int = Quer
         raise HTTPException(500, f"Visualization failed: {e}")
 
 
+@router.get("/visualization/{file_id}/diff/{mode}")
+async def get_diff_visualization(
+    file_id: str,
+    mode: str,
+    page: int = Query(0, ge=0),
+):
+    """Get side-by-side diff visualization: original vs vectorized."""
+    if file_id not in files_db:
+        raise HTTPException(404, "File not found")
+    
+    file_info = files_db[file_id]
+    
+    try:
+        if file_info.get("is_pdf") and file_id in pdf_pages_db:
+            pages = pdf_pages_db[file_id]
+            pil_img = Image.open(pages[page])
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            image = np.array(pil_img)
+        else:
+            from avers.utils.image_helpers import load_image_auto
+            pages = load_image_auto(Path(file_info["path"]), dpi=300, max_pages=1)
+            image = pages[0] if pages else np.zeros((100, 100, 3), dtype=np.uint8)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load image: {e}")
+    
+    vis_path = RESULTS_DIR / f"{file_id}_diff_{mode}_p{page}.png"
+    
+    try:
+        from avers.web.visualization import visualize_diff_original_vs_vectorized
+        
+        exclusion = []
+        if file_id in manifests_db:
+            manifest = manifests_db[file_id]
+            exclusion = [c.bbox for c in manifest.components]
+        
+        diffs = visualize_diff_original_vs_vectorized(image, exclusion_bboxes=exclusion if exclusion else None)
+        
+        if mode not in diffs:
+            raise HTTPException(400, f"Unknown diff mode: {mode}. Known: {list(diffs.keys())}")
+        
+        vis = diffs[mode]
+        cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
+        return FileResponse(str(vis_path))
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Diff visualization failed: {e}")
+
+
+@router.get("/graph/{file_id}/3d")
+async def get_3d_graph(file_id: str):
+    """Get 3D graph JSON for Three.js visualization."""
+    if file_id not in files_db:
+        raise HTTPException(404, "File not found")
+    
+    if file_id not in manifests_db:
+        result_path = RESULTS_DIR / f"{file_id}.json"
+        if not result_path.exists():
+            raise HTTPException(404, "Run processing first")
+        with open(result_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        from avers.core.types import AVERSManifest
+        manifest = AVERSManifest(**data)
+    else:
+        manifest = manifests_db[file_id]
+    
+    try:
+        from avers.web.visualization import visualize_graph_3d
+        file_info = files_db[file_id]
+        graph_3d = visualize_graph_3d(
+            manifest.components,
+            manifest.nets,
+            width=file_info.get("width", 1000),
+            height=file_info.get("height", 800),
+        )
+        return graph_3d
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"3D graph generation failed: {e}")
+
+
 @router.get("/graph/{file_id}/interactive")
 async def get_interactive_graph(file_id: str):
     """Get interactive graph JSON for D3/vis-network."""

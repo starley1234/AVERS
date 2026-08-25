@@ -642,6 +642,10 @@ body {
         <button class="tool-btn" data-vis="ocr" onclick="setVis('ocr')" title="OCR">T</button>
         <button class="tool-btn" data-vis="vectorization" onclick="setVis('vectorization')" title="Векторизация">〰</button>
         <button class="tool-btn active" data-vis="graph" onclick="setVis('graph')" title="Граф">⬡</button>
+        <button class="tool-btn" data-vis="diff" onclick="setVis('diff')" title="Diff оригинал vs вектор">🎚️</button>
+      </div>
+      <div class="toolbar-group">
+        <button class="tool-btn" onclick="window.open('/visualize','_blank')" title="Открыть расширенную визуализацию">🎬 3D</button>
       </div>
       <div class="toolbar-group">
         <span style="font-size:11px;color:var(--text2)" id="zoomLabel">100%</span>
@@ -1219,11 +1223,21 @@ function setVis(mode) {
   if (mode === 'original') {
     canvasImg.src = `${API}/api/image/${state.fileId}`;
     document.getElementById('overlaySvg').innerHTML = '';
+  } else if (mode === 'diff') {
+    // Diff modes - cycle through diff types
+    const diffModes = ['side_by_side', 'overlay', 'difference', 'blend_slider', 'checker', 'final_overlay'];
+    const current = state.diffMode || 'side_by_side';
+    const nextIdx = (diffModes.indexOf(current) + 1) % diffModes.length;
+    const nextMode = diffModes[nextIdx];
+    state.diffMode = nextMode;
+    
+    canvasImg.src = `${API}/api/visualization/${state.fileId}/diff/${nextMode}`;
+    document.getElementById('overlaySvg').innerHTML = '';
+    document.getElementById('statusText').textContent = `Diff режим: ${nextMode} — кликните еще раз для следующего`;
   } else {
-    // Try to load visualization
     canvasImg.src = `${API}/api/visualization/${state.fileId}/${mode}`;
-    // Keep overlay for graph mode
     if (mode === 'graph') renderOverlay();
+    else document.getElementById('overlaySvg').innerHTML = '';
   }
 }
 
@@ -1337,7 +1351,7 @@ function downloadJSON(fmt) {
 }
 
 function resetProject() {
-  state = {fileId:null, jobId:null, manifest:null, zoom:1, pan:{x:0,y:0}, dragging:false, dragStart:{x:0,y:0}, visMode:'graph', layers:{detections:true,text:true,wires:true,pins:true,issues:true}, annotateMode:false, annotations:[]};
+  state = {fileId:null, jobId:null, manifest:null, zoom:1, pan:{x:0,y:0}, dragging:false, dragStart:{x:0,y:0}, visMode:'graph', layers:{detections:true,text:true,wires:true,pins:true,issues:true}, annotateMode:false, annotations:[], isPDF:false, pdfPages:[], currentPDFPage:0, diffMode:'side_by_side'};
   document.getElementById('fileInfo').style.display='none';
   document.getElementById('canvasImg').style.display='none';
   document.getElementById('canvasEmpty').style.display='block';

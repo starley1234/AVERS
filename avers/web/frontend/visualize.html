@@ -3,9 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>АВЕРС — Визуализация процесса</title>
+<title>АВЕРС — Визуализация процесса · Diff + 3D</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
 <style>
 :root {
   --bg:#0a0a0b; --bg2:#141416; --bg3:#1c1c1f; --bg4:#26262b;
@@ -16,36 +18,19 @@
 }
 * {margin:0;padding:0;box-sizing:border-box}
 body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden}
-.header {height:56px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 20px}
+.header {height:56px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 20px; flex-shrink:0}
 .logo {display:flex; align-items:center; gap:12px; font-weight:700; font-size:18px}
 .logo-mark {width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white}
-.btn {height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit}
+.btn {height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s}
+.btn:hover {background:var(--bg4);border-color:var(--border2)}
 .btn-primary {background:var(--accent);border-color:var(--accent);color:white}
+.btn-primary:hover {background:var(--accent2)}
+.btn-sm {height:26px;padding:0 10px;font-size:11px}
 .btn:disabled {opacity:0.5}
 
-/* Pipeline stepper */
-.stepper {
-  height:72px;
-  background:var(--bg2);
-  border-bottom:1px solid var(--border);
-  display:flex;
-  align-items:center;
-  padding:0 20px;
-  gap:0;
-  overflow-x:auto;
-}
-.step {
-  display:flex;
-  align-items:center;
-  gap:12px;
-  padding:0 20px;
-  height:100%;
-  cursor:pointer;
-  border-bottom:3px solid transparent;
-  transition:all 0.2s;
-  flex-shrink:0;
-  position:relative;
-}
+/* Stepper */
+.stepper {height:72px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:0;overflow-x:auto;flex-shrink:0}
+.step {display:flex;align-items:center;gap:12px;padding:0 20px;height:100%;cursor:pointer;border-bottom:3px solid transparent;transition:all 0.2s;flex-shrink:0}
 .step:hover {background:var(--bg3)}
 .step.active {border-bottom-color:var(--accent); background:rgba(108,92,255,0.08)}
 .step.done {border-bottom-color:var(--green)}
@@ -56,20 +41,21 @@ body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); h
 .step-name {font-size:13px;font-weight:600}
 .step-desc {font-size:11px;color:var(--text2)}
 .step-time {font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text2);background:var(--bg3);padding:2px 6px;border-radius:4px;margin-top:2px;display:inline-block;width:fit-content}
-.step-arrow {color:var(--border2); font-size:20px; margin:0 4px}
+.step-arrow {color:var(--border2); font-size:20px; margin:0 4px;flex-shrink:0}
 
 /* Main */
 .main {flex:1;display:flex;overflow:hidden}
 
-/* Left - stage details */
+/* Sidebars */
 .sidebar {width:340px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
-.sidebar-header {padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.sidebar-right {width:380px;border-right:none;border-left:1px solid var(--border)}
+.sidebar-header {padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
 .sidebar-title {font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text2)}
 .sidebar-content {flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:20px}
 .section {display:flex;flex-direction:column;gap:10px}
 .section-label {font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3)}
 
-/* Visual steps */
+/* Vis steps */
 .vis-steps {display:flex;flex-direction:column;gap:8px}
 .vis-step {display:flex;gap:10px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all 0.15s}
 .vis-step:hover {border-color:var(--border2);background:var(--bg4)}
@@ -82,95 +68,97 @@ body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); h
 
 /* Canvas */
 .canvas-wrap {flex:1;display:flex;flex-direction:column;background:#08080a;position:relative;overflow:hidden}
-.canvas-toolbar {height:44px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:8px;flex-shrink:0}
+.canvas-toolbar {height:44px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:8px;flex-shrink:0;flex-wrap:wrap}
 .toolbar-group {display:flex;align-items:center;gap:4px;padding:0 8px;border-right:1px solid var(--border)}
-.tool-btn {width:28px;height:28px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center}
-.tool-btn:hover {background:var(--bg3);color:var(--text)}
-.tool-btn.active {background:var(--accent);color:white}
+.toolbar-group:last-child {border-right:none}
+.tool-btn {height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;font-family:inherit;gap:4px}
+.tool-btn:hover {background:var(--bg4);color:var(--text)}
+.tool-btn.active {background:var(--accent);color:white;border-color:var(--accent)}
 
-/* Split view */
+/* Split and diff */
 .split {flex:1;display:flex;overflow:hidden}
 .split-pane {flex:1;position:relative;overflow:hidden;border-right:1px solid var(--border);display:flex;flex-direction:column}
 .split-pane:last-child {border-right:none}
-.split-label {height:28px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text2);gap:8px}
-.split-canvas {flex:1;position:relative;overflow:hidden;cursor:grab}
-.split-canvas img {position:absolute;max-width:none;transform-origin:0 0;user-select:none}
+.split-label {height:28px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text2);gap:8px;flex-shrink:0}
+.split-canvas {flex:1;position:relative;overflow:hidden;cursor:grab;background:#08080a}
+.split-canvas img {position:absolute;max-width:none;transform-origin:0 0;user-select:none;pointer-events:none}
 .split-canvas:active {cursor:grabbing}
 
+/* Diff slider */
+.diff-container {position:relative;width:100%;height:100%;overflow:hidden;user-select:none}
+.diff-img {position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
+.diff-overlay {position:absolute;top:0;left:0;width:50%;height:100%;overflow:hidden;border-right:3px solid var(--accent);will-change:width}
+.diff-handle {position:absolute;top:50%;left:50%;width:48px;height:48px;background:var(--accent);border:3px solid white;border-radius:50%;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;color:white;font-size:18px;cursor:ew-resize;box-shadow:0 8px 24px rgba(0,0,0,0.5);z-index:10;will-change:left}
+.diff-label {position:absolute;top:12px;padding:6px 12px;background:rgba(0,0,0,0.7);color:white;border-radius:6px;font-size:11px;font-weight:600;backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.1)}
+.diff-label-left {left:12px}
+.diff-label-right {right:12px}
+
 /* Graph */
-.graph-wrap {flex:1;position:relative;background:var(--bg)}
+.graph-wrap {flex:1;position:relative;background:var(--bg);overflow:hidden}
 #graphNetwork {width:100%;height:100%}
+#graph3D {width:100%;height:100%;display:block}
 
 /* Playback */
 .playback {height:56px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:16px;flex-shrink:0}
-.playback-btn {width:40px;height:40px;border-radius:10px;background:var(--accent);border:none;color:white;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.playback-btn {width:40px;height:40px;border-radius:10px;background:var(--accent);border:none;color:white;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .playback-slider {flex:1;height:4px;background:var(--bg4);border-radius:100px;position:relative;cursor:pointer}
 .playback-progress {height:100%;background:var(--accent);border-radius:100px;transition:width 0.3s}
 .playback-time {font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text2)}
 
-/* Right sidebar */
-.sidebar-right {width:380px;border-right:none;border-left:1px solid var(--border)}
+/* Metrics */
 .metrics {display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .metric {background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
 .metric-label {font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em}
 .metric-value {font-size:18px;font-weight:700;margin-top:4px;font-family:'JetBrains Mono',monospace}
 .metric-sub {font-size:10px;color:var(--text2);margin-top:2px}
-
-/* Legend */
 .legend {display:flex;flex-direction:column;gap:6px}
 .legend-item {display:flex;align-items:center;gap:8px;font-size:11px}
 .legend-dot {width:12px;height:12px;border-radius:3px;flex-shrink:0}
 .legend-count {margin-left:auto;font-family:'JetBrains Mono',monospace;background:var(--bg3);padding:1px 6px;border-radius:100px;font-size:10px}
-
-/* JSON */
 .json-view {background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all}
-
-/* Empty */
 .empty {padding:32px 16px;text-align:center;color:var(--text2)}
+.tabs {display:flex;gap:2px;background:var(--bg3);padding:3px;border-radius:8px;border:1px solid var(--border)}
+.tab {flex:1;height:28px;border-radius:6px;border:none;background:transparent;color:var(--text2);font-size:12px;font-weight:500;cursor:pointer;font-family:inherit}
+.tab.active {background:var(--bg4);color:var(--text)}
 </style>
 </head>
 <body>
 
 <div class="header">
-  <div class="logo"><div class="logo-mark">A</div> АВЕРС — Визуализация процесса</div>
+  <div class="logo"><div class="logo-mark">A</div> АВЕРС — Визуализация · Diff + 3D</div>
   <div style="display:flex;gap:8px;align-items:center">
     <button class="btn" onclick="location.href='/'">← Валидатор</button>
     <button class="btn" onclick="location.href='/annotator'">✏️ Аннотатор</button>
     <button class="btn" onclick="window.open('/docs','_blank')">API</button>
-    <button class="btn btn-primary" onclick="generateReport()">📄 Отчет HTML</button>
+    <button class="btn btn-primary" onclick="generateReport()">📄 Отчет</button>
   </div>
 </div>
 
 <div class="stepper" id="stepper">
-  <div class="step active" data-step="0" onclick="goToStep(0)"><div class="step-icon">📄</div><div class="step-info"><div class="step-name">Исходник</div><div class="step-desc">TIF/PNG/PDF 15k×4k</div><div class="step-time">—</div></div></div>
+  <div class="step active" data-step="0" onclick="goToStep(0)"><div class="step-icon">📄</div><div class="step-info"><div class="step-name">Исходник</div><div class="step-desc">TIF/PNG/PDF</div><div class="step-time">—</div></div></div>
   <div class="step-arrow">→</div>
-  <div class="step" data-step="1" onclick="goToStep(1)"><div class="step-icon">◫</div><div class="step-info"><div class="step-name">SAHI Нарезка</div><div class="step-desc">1024×1024 tiles 0.2 overlap</div><div class="step-time" id="time-slicing">—</div></div></div>
+  <div class="step" data-step="1" onclick="goToStep(1)"><div class="step-icon">◫</div><div class="step-info"><div class="step-name">SAHI</div><div class="step-desc">1024 tiles</div><div class="step-time" id="time-slicing">—</div></div></div>
   <div class="step-arrow">→</div>
-  <div class="step" data-step="2" onclick="goToStep(2)"><div class="step-icon">◈</div><div class="step-info"><div class="step-name">Детекция УГО</div><div class="step-desc">RT-DETR/YOLO 10 классов</div><div class="step-time" id="time-detection">—</div></div></div>
+  <div class="step" data-step="2" onclick="goToStep(2)"><div class="step-icon">◈</div><div class="step-info"><div class="step-name">Детекция</div><div class="step-desc">RT-DETR 10 классов</div><div class="step-time" id="time-detection">—</div></div></div>
   <div class="step-arrow">→</div>
-  <div class="step" data-step="3" onclick="goToStep(3)"><div class="step-icon">T</div><div class="step-info"><div class="step-name">OCR</div><div class="step-desc">PaddleOCR + ГОСТ regex</div><div class="step-time" id="time-ocr">—</div></div></div>
+  <div class="step" data-step="3" onclick="goToStep(3)"><div class="step-icon">T</div><div class="step-info"><div class="step-name">OCR</div><div class="step-desc">PaddleOCR</div><div class="step-time" id="time-ocr">—</div></div></div>
   <div class="step-arrow">→</div>
-  <div class="step" data-step="4" onclick="goToStep(4)"><div class="step-icon">〰</div><div class="step-info"><div class="step-name">Векторизация</div><div class="step-desc">Скелетизация + RDP</div><div class="step-time" id="time-vectorization">—</div></div></div>
+  <div class="step" data-step="4" onclick="goToStep(4)"><div class="step-icon">〰</div><div class="step-info"><div class="step-name">Векторизация</div><div class="step-desc">Skeleton+RDP</div><div class="step-time" id="time-vectorization">—</div></div></div>
   <div class="step-arrow">→</div>
-  <div class="step" data-step="5" onclick="goToStep(5)"><div class="step-icon">⬡</div><div class="step-info"><div class="step-name">Граф</div><div class="step-desc">NetworkX + Snapping</div><div class="step-time" id="time-graph">—</div></div></div>
+  <div class="step" data-step="5" onclick="goToStep(5)"><div class="step-icon">⬡</div><div class="step-info"><div class="step-name">Граф</div><div class="step-desc">NetworkX</div><div class="step-time" id="time-graph">—</div></div></div>
   <div class="step-arrow">→</div>
-  <div class="step" data-step="6" onclick="goToStep(6)"><div class="step-icon">◐</div><div class="step-info"><div class="step-name">VLM+RAG</div><div class="step-desc">Qwen-VL + CLIP few-shot</div><div class="step-time" id="time-vlm">—</div></div></div>
+  <div class="step" data-step="6" onclick="goToStep(6)"><div class="step-icon">◐</div><div class="step-info"><div class="step-name">VLM+RAG</div><div class="step-desc">Qwen-VL+CLIP</div><div class="step-time" id="time-vlm">—</div></div></div>
   <div class="step-arrow">→</div>
-  <div class="step" data-step="7" onclick="goToStep(7)"><div class="step-icon">✓</div><div class="step-info"><div class="step-name">Netlist</div><div class="step-desc">JSON/XML для САПР</div><div class="step-time">—</div></div></div>
+  <div class="step" data-step="7" onclick="goToStep(7)"><div class="step-icon">✓</div><div class="step-info"><div class="step-name">Netlist</div><div class="step-desc">JSON/XML</div><div class="step-time">—</div></div></div>
 </div>
 
 <div class="main">
-  <!-- Left -->
   <div class="sidebar">
-    <div class="sidebar-header"><div class="sidebar-title">Детали стадии</div><button class="btn" style="height:24px;font-size:11px" onclick="toggleSplit()">◫ Split</button></div>
+    <div class="sidebar-header"><div class="sidebar-title">Детали стадии</div><div style="display:flex;gap:4px"><button class="btn btn-sm" onclick="toggleSplit()">◫</button></div></div>
     <div class="sidebar-content">
-      
       <div class="section" id="stageInfo">
         <div class="section-label" id="stageLabel">Исходное изображение</div>
-        <div style="font-size:12px;line-height:1.5;color:var(--text2)" id="stageDesc">
-          Загрузите схему (PNG, JPG, TIF, PDF). Поддерживается многостраничный PDF — каждая страница обрабатывается отдельно или merge.<br><br>
-          <b>Ключевой принцип:</b> никаких черных ящиков. Полноразмерный скан 14000×3500 не скармливается в VLM целиком. Многостадийный детерминированный гибридный пайплайн.
-        </div>
+        <div style="font-size:12px;line-height:1.5;color:var(--text2)" id="stageDesc">Зарузите схему. Поддерживается PDF многостраничный. Принцип: никаких черных ящиков, гибридный пайплайн.</div>
       </div>
 
       <div class="section" id="visStepsSection" style="display:none">
@@ -178,91 +166,147 @@ body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); h
         <div class="vis-steps" id="visSteps"></div>
       </div>
 
-      <div class="section">
-        <div class="section-label">Легенда</div>
-        <div class="legend" id="legend">
-          <div class="legend-item"><div class="legend-dot" style="background:#6c5cff"></div> connector_body <span class="legend-count">0</span></div>
-          <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div> pin <span class="legend-count">0</span></div>
-          <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> junction_dot <span class="legend-count">0</span></div>
-          <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> ground <span class="legend-count">0</span></div>
+      <div class="section" id="diffSection" style="display:none">
+        <div class="section-label">🎚️ Side-by-side Diff — оригинал vs вектор</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <button class="tool-btn active" data-diff="side_by_side" onclick="setDiffMode('side_by_side')">Рядом</button>
+            <button class="tool-btn" data-diff="overlay" onclick="setDiffMode('overlay')">Наложение</button>
+            <button class="tool-btn" data-diff="difference" onclick="setDiffMode('difference')">Разница</button>
+            <button class="tool-btn" data-diff="blend_slider" onclick="setDiffMode('blend_slider')">Слайдер</button>
+            <button class="tool-btn" data-diff="checker" onclick="setDiffMode('checker')">Шахматка</button>
+            <button class="tool-btn" data-diff="final_overlay" onclick="setDiffMode('final_overlay')">Итог</button>
+          </div>
+          <div style="font-size:10px;color:var(--text2);line-height:1.4">
+            <b>Рядом:</b> две картинки рядом с границей<br>
+            <b>Наложение:</b> 70% оригинал + 30% вектор<br>
+            <b>Разница:</b> зеленый=совпадает, красный=отличается<br>
+            <b>Слайдер:</b> двигайте границу для сравнения<br>
+            <b>Шахматка:</b> квадраты 64×64 чередуются
+          </div>
         </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Легенда ГОСТ</div>
+        <div class="legend" id="legend"></div>
       </div>
 
       <div class="section">
         <div class="section-label">Метрики</div>
         <div class="metrics" id="metrics">
-          <div class="metric"><div class="metric-label">Компонентов</div><div class="metric-value" id="mComp">0</div><div class="metric-sub">УГО найдено</div></div>
+          <div class="metric"><div class="metric-label">Компонентов</div><div class="metric-value" id="mComp">0</div><div class="metric-sub">УГО</div></div>
           <div class="metric"><div class="metric-label">Цепей</div><div class="metric-value" id="mNets">0</div><div class="metric-sub">Netlist</div></div>
           <div class="metric"><div class="metric-label">Время</div><div class="metric-value" id="mTime">0s</div><div class="metric-sub">Общее</div></div>
-          <div class="metric"><div class="metric-label">Проблем</div><div class="metric-value" id="mIssues">0</div><div class="metric-sub">На проверку</div></div>
+          <div class="metric"><div class="metric-label">Проблем</div><div class="metric-value" id="mIssues">0</div><div class="metric-sub">Проверка</div></div>
         </div>
       </div>
 
       <div class="section" id="ragExplain" style="display:none">
-        <div class="section-label">Vision RAG — Объяснение</div>
-        <div style="font-size:11px;line-height:1.5;color:var(--text2)">
-          <div style="background:var(--bg3);padding:10px;border-radius:8px;border:1px solid var(--border)">
-            <div style="font-weight:600;color:var(--text);margin-bottom:6px">Как VLM приняло решение:</div>
-            <div id="ragReasoning">—</div>
-            <div style="margin-top:8px"><b>Примеры из базы:</b></div>
-            <div id="ragExamples" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"></div>
-          </div>
+        <div class="section-label">Vision RAG — Объяснение VLM</div>
+        <div style="background:var(--bg3);padding:10px;border-radius:8px;border:1px solid var(--border);font-size:11px;line-height:1.5;color:var(--text2)">
+          <div style="font-weight:600;color:var(--text);margin-bottom:6px">Решение VLM:</div>
+          <div id="ragReasoning">—</div>
+          <div id="ragExamples" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"></div>
         </div>
       </div>
-
     </div>
   </div>
 
-  <!-- Center -->
   <div class="canvas-wrap">
     <div class="canvas-toolbar">
       <div class="toolbar-group">
-        <button class="tool-btn" onclick="zoom(1.25,0)">＋</button>
-        <button class="tool-btn" onclick="zoom(0.8,0)">－</button>
+        <button class="tool-btn" onclick="zoom(1.25)">＋</button>
+        <button class="tool-btn" onclick="zoom(0.8)">－</button>
         <button class="tool-btn" onclick="fitView()">⤢</button>
-        <span style="font-size:11px;color:var(--text2);margin-left:8px" id="zoomLabel">100%</span>
+        <span style="font-size:11px;color:var(--text2)" id="zoomLabel">100%</span>
       </div>
       <div class="toolbar-group">
         <button class="tool-btn active" data-mode="image" onclick="setMode('image')">🖼 Изображение</button>
-        <button class="tool-btn" data-mode="graph" onclick="setMode('graph')">⬡ Граф</button>
-        <button class="tool-btn" data-mode="split" onclick="setMode('split')">◫ Сравнение</button>
+        <button class="tool-btn" data-mode="diff" onclick="setMode('diff')">🎚️ Diff</button>
+        <button class="tool-btn" data-mode="graph2d" onclick="setMode('graph2d')">⬡ Граф 2D</button>
+        <button class="tool-btn" data-mode="graph3d" onclick="setMode('graph3d')">⬢ Граф 3D</button>
+        <button class="tool-btn" data-mode="split" onclick="setMode('split')">◫ Split</button>
       </div>
       <div class="toolbar-group">
         <span style="font-size:11px;color:var(--text2)" id="coordsLabel">—</span>
         <span style="font-size:11px;color:var(--text2)" id="infoLabel">Загрузите файл</span>
+      </div>
+      <div class="toolbar-group" id="diffToolbar" style="display:none">
+        <span style="font-size:10px;color:var(--text2)">Diff:</span>
+        <button class="tool-btn active" data-diff="side_by_side" onclick="setDiffMode('side_by_side')">Рядом</button>
+        <button class="tool-btn" data-diff="blend_slider" onclick="setDiffMode('blend_slider')">Слайдер</button>
+        <button class="tool-btn" data-diff="difference" onclick="setDiffMode('difference')">Разница</button>
       </div>
     </div>
 
     <!-- Image mode -->
     <div class="split" id="imageMode">
       <div class="split-pane" id="paneLeft">
-        <div class="split-label"><span style="width:8px;height:8px;background:var(--text2);border-radius:50%;display:inline-block"></span> <span id="labelLeft">Оригинал</span></div>
+        <div class="split-label">Оригинал (raster)</div>
         <div class="split-canvas" id="canvasLeft"><img id="imgLeft" style="display:none"></div>
       </div>
       <div class="split-pane" id="paneRight">
-        <div class="split-label"><span style="width:8px;height:8px;background:var(--accent);border-radius:50%;display:inline-block"></span> <span id="labelRight">Текущая стадия</span></div>
-        <div class="split-canvas" id="canvasRight"><img id="imgRight" style="display:none"><div class="empty" id="emptyRight"><div style="font-size:24px">🔍</div><div style="font-size:12px;margin-top:8px">Выберите стадию сверху<br>или загрузите файл</div></div></div>
+        <div class="split-label" id="labelRight">Текущая стадия</div>
+        <div class="split-canvas" id="canvasRight"><img id="imgRight" style="display:none"><div class="empty" id="emptyRight">Загрузите файл или выберите стадию</div></div>
       </div>
     </div>
 
-    <!-- Graph mode -->
-    <div id="graphMode" style="display:none;flex:1;flex-direction:column">
-      <div class="split-label">⬡ Интерактивный граф связей (перетаскивайте узлы, колесо — зум)</div>
+    <!-- Diff mode with slider -->
+    <div id="diffMode" style="display:none;flex:1;flex-direction:column">
+      <div class="split-label">🎚️ Side-by-side Diff — двигайте слайдер, сравнивайте оригинал vs векторизованный</div>
+      <div style="flex:1;position:relative;background:#08080a;overflow:hidden" id="diffWrap">
+        <div class="diff-container" id="diffContainer">
+          <img class="diff-img" id="diffImgOriginal" style="display:none">
+          <div class="diff-overlay" id="diffOverlay"><img class="diff-img" id="diffImgVector" style="display:none;width:100%"></div>
+          <div class="diff-handle" id="diffHandle">↔</div>
+          <div class="diff-label diff-label-left">ORIGINAL</div>
+          <div class="diff-label diff-label-right">VECTORIZED</div>
+        </div>
+        <div style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);padding:8px 12px;border-radius:8px;display:flex;gap:8px;align-items:center;border:1px solid var(--border)">
+          <span style="font-size:10px;color:var(--text2)">Прозрачность:</span>
+          <input type="range" min="0" max="100" value="70" id="opacitySlider" oninput="setOpacity(this.value)" style="width:120px">
+          <span style="font-size:10px;font-family:'JetBrains Mono'" id="opacityLabel">70%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Graph 2D -->
+    <div id="graph2DMode" style="display:none;flex:1;flex-direction:column">
+      <div class="split-label">⬡ Граф 2D — перетаскивайте узлы, колесо — зум (vis-network)</div>
       <div class="graph-wrap"><div id="graphNetwork"></div></div>
+    </div>
+
+    <!-- Graph 3D -->
+    <div id="graph3DMode" style="display:none;flex:1;flex-direction:column">
+      <div class="split-label">⬢ Граф 3D — Three.js · OrbitControls (тяните для вращения, колесо — зум, правый клик — панорама) · Z-слои: разъемы -20/20, компоненты 50, земля -30, провода 10±sin</div>
+      <div class="graph-wrap" style="background:#050508">
+        <canvas id="graph3D"></canvas>
+        <div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.7);padding:10px;border-radius:8px;border:1px solid var(--border);font-size:10px;line-height:1.5">
+          <div style="font-weight:600;margin-bottom:6px">Управление 3D:</div>
+          <div>🖱️ Левая кнопка — вращение</div>
+          <div>🖱️ Колесо — зум</div>
+          <div>🖱️ Правая кнопка — панорама</div>
+          <div>📦 Фиолетовый — разъемы</div>
+          <div>🟡 Желтый — пины</div>
+          <div>🔴 Красный — провода/nets</div>
+          <div style="margin-top:8px"><button class="btn btn-sm" onclick="reset3DView()">↺ Сброс вида</button> <button class="btn btn-sm" onclick="toggle3DAnimation()">⏯ Анимация</button></div>
+        </div>
+        <div style="position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,0.7);padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:10px;font-family:'JetBrains Mono'" id="graph3DStats">—</div>
+      </div>
     </div>
   </div>
 
-  <!-- Right -->
   <div class="sidebar sidebar-right">
-    <div class="sidebar-header"><div class="sidebar-title">Результат</div><div style="display:flex;gap:4px"><button class="btn" style="height:24px;font-size:11px" onclick="switchRightTab('json')">JSON</button><button class="btn" style="height:24px;font-size:11px" onclick="switchRightTab('nets')">Цепи</button></div></div>
+    <div class="sidebar-header"><div class="sidebar-title">Результат</div><div class="tabs" style="width:180px"><button class="tab active" data-rtab="json" onclick="switchRightTab('json')">JSON</button><button class="tab" data-rtab="nets" onclick="switchRightTab('nets')">Цепи</button></div></div>
     <div class="sidebar-content">
       <div id="rightJson">
-        <div class="section"><div class="section-label">Манифест (сокращенно)</div><div class="json-view" id="jsonView">—</div></div>
-        <div class="section" style="margin-top:12px"><div class="section-label">Компоненты</div><div id="compList" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow:auto"></div></div>
+        <div class="section"><div class="section-label">Манифест</div><div class="json-view" id="jsonView">—</div></div>
+        <div class="section"><div class="section-label">Компоненты</div><div id="compList" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow:auto"></div></div>
       </div>
       <div id="rightNets" style="display:none">
-        <div class="section"><div class="section-label">Граф связей</div><div id="netList" style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto"></div></div>
-        <div class="section" style="margin-top:12px"><div class="section-label">Проблемы</div><div id="issueList" style="display:flex;flex-direction:column;gap:6px"></div></div>
+        <div class="section"><div class="section-label">Цепи</div><div id="netList" style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto"></div></div>
+        <div class="section"><div class="section-label">Проблемы</div><div id="issueList" style="display:flex;flex-direction:column;gap:6px"></div></div>
       </div>
     </div>
   </div>
@@ -274,10 +318,7 @@ body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); h
     <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);font-family:'JetBrains Mono'"><span id="playbackLabel">Шаг 0/7 — Исходник</span><span id="playbackTime">—</span></div>
     <div class="playback-slider" onclick="seek(event)"><div class="playback-progress" id="playbackProgress" style="width:0%"></div></div>
   </div>
-  <div style="display:flex;gap:6px">
-    <button class="btn" onclick="prevStep()">← Назад</button>
-    <button class="btn" onclick="nextStep()">Далее →</button>
-  </div>
+  <div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="prevStep()">←</button><button class="btn btn-sm" onclick="nextStep()">→</button><button class="btn btn-sm" onclick="generateReport()">📄 Отчет</button></div>
 </div>
 
 <script>
@@ -286,25 +327,33 @@ let state = {
   manifest: null,
   currentStep: 0,
   playing: false,
+  mode: 'image',
+  diffMode: 'blend_slider',
+  graph: null,
+  graph3D: {scene:null, camera:null, renderer:null, controls:null, nodes:[], edges:[], animating:false},
   zoom: 1,
   panLeft: {x:0,y:0},
   panRight: {x:0,y:0},
-  mode: 'image',
-  split: true,
-  graph: null,
 };
 
 const STEPS = [
-  {name:'Исходник', desc:'Оригинальный скан TIF/PNG/PDF', icon:'📄', details:'Загрузите схему. Поддерживается многостраничный PDF — каждая страница как отдельное изображение. Форматы А4, А3, А2, А2х6 до 15000×4000 px, 300+ DPI.'},
-  {name:'SAHI Нарезка', desc:'Нарезка на тайлы 1024×1024 overlap 0.2', icon:'◫', details:'Проблема: ресайз 14000×3500 до 640×640 уничтожает тонкие линии 1-2px. Решение: SAHI — нарезка на перекрывающиеся тайлы, параллельная обработка RT-DETR/YOLO, проекция координат обратно, NMS склейка дубликатов. Наглядно: зеленые области — overlap.'},
-  {name:'Детекция УГО', desc:'RT-DETR/YOLO 10 классов ГОСТ', icon:'◈', details:'Модель: RT-DETRv2-l или YOLOv11x. Классы: connector_body (корпус разъема), pin (контакт), junction_dot (точка Т-соединения), ground (земля), shield (экран), offpage_connector (стрелка перехода), diode, relay, resistor, capacitor. Обучение на синтетическом + публичных датасетах (Masala-CHAI 4300, ElectroNet 3500).'},
-  {name:'OCR', desc:'PaddleOCR + ГОСТ regex', icon:'T', details:'Модель: PaddleOCR DBNet++ + SVTR/CRNN, дообучение на ГОСТ 2.304 шрифты. Классификатор ориентации 0°/90°/270°. Regex валидация: разъемы ^[ХX]\\d+, пины ^\\d+, провода ^БПВЛ, напряжения +27В, GND. Привязка текста к объектам через k-d tree.'},
-  {name:'Векторизация', desc:'Скелетизация Guo-Hall + RDP', icon:'〰', details:'Нейросети нестабильны на длинных тонких линиях → классический CV: 1) Маска исключений (вырезаем УГО и текст), 2) Скелетизация к 1px (Guo-Hall/Zhang-Suen), 3) HoughLinesP + RDP упрощение, 4) Топология узлов: degree 1=тупик, degree 3-4 с junction_dot=разветвление, degree 4 без точки=перехлест без связи. Наглядно: binary → masked → skeleton → segments → junctions.'},
-  {name:'Граф', desc:'NetworkX + Snapping + Netlist', icon:'⬡', details:'Assembly Engine: 1) Snapping — концы проводов притягиваются к пинам R=15px, 2) Семантическая ассоциация текста (k-d tree), 3) Схлопывание цепочек в ребра графа, 4) Поиск T-узлов и шин, 5) Извлечение nets. Интерактивный граф: узлы — компоненты/пины/junctions, ребра — провода.'},
-  {name:'VLM+RAG', desc:'Qwen-VL + CLIP few-shot арбитраж', icon:'◐', details:'Локальная VLM (Qwen2.5-VL-7B) только для ROI 256×256 при коллизии: confidence<0.65, висящая линия, спорный перекресток. Vision RAG: каждый ROI кодируется CLIP ViT-B/32 → 512d → FAISS Top-K похожих примеров → few-shot prompt в VLM → JSON {connected, confidence}. База пополняется из валидатора (active learning).'},
-  {name:'Netlist', desc:'JSON/XML для САПР', icon:'✓', details:'Выход: AVERSManifest JSON с schema_metadata, components (id, designator, type, bbox, pins), nets (net_id, wire_type, connections, path_points, confidence), human_review_required. Конвертация в XML для Макс-САПР, КОМПАС-Электрик. Готов к загрузке в САПР.'},
+  {name:'Исходник', desc:'TIF/PNG/PDF', icon:'📄', details:'Загрузите схему. PDF многостраничный. Принцип: гибридный пайплайн, не скармливаем 15k×4k в VLM.'},
+  {name:'SAHI', desc:'1024 tiles 0.2', icon:'◫', details:'SAHI: нарезка на тайлы 1024×1024 overlap 0.2, параллельная обработка, NMS. Зеленые области — overlap.'},
+  {name:'Детекция', desc:'RT-DETR 10 классов', icon:'◈', details:'RT-DETRv2-l/YOLOv11x, 10 классов ГОСТ: connector_body, pin, junction_dot, ground, shield, offpage, diode, relay, resistor, capacitor. Обучение на Masala-CHAI 4300 + ElectroNet 3500 + синтетика.'},
+  {name:'OCR', desc:'PaddleOCR ГОСТ', icon:'T', details:'PaddleOCR DBNet++ + SVTR, 0°/90°/270°, regex Х1, БПВЛ, +27В, k-d tree привязка.'},
+  {name:'Векторизация', desc:'Skeleton+RDP', icon:'〰', details:'CV: маска исключений → скелетизация Guo-Hall 1px → Hough+RDP → junctions degree>=3. Binary/masked/skeleton/segments/junctions/final.'},
+  {name:'Граф', desc:'NetworkX+Snapping', icon:'⬡', details:'Snapping R=15px, k-d tree текст, схлопывание цепочек, T-узлы, nets. Интерактивный граф 2D/3D.'},
+  {name:'VLM+RAG', desc:'Qwen-VL+CLIP', icon:'◐', details:'ROI 256×256 при коллизии, Vision RAG: CLIP 512d + FAISS Top-K → few-shot VLM → JSON connected.'},
+  {name:'Netlist', desc:'JSON/XML САПР', icon:'✓', details:'AVERSManifest JSON/XML для Макс-САПР, КОМПАС-Электрик.'},
 ];
 
+const GOST_COLORS = {
+  connector_body:'#6c5cff', pin:'#eab308', junction_dot:'#ef4444', ground:'#3b82f6',
+  shield:'#8b5cf6', offpage_connector:'#ec4899', diode:'#f97316', relay:'#06b6d4',
+  resistor:'#84cc16', capacitor:'#a855f7', wire:'#646464', text:'#3b82f6'
+};
+
+// Stepper
 function goToStep(idx) {
   state.currentStep = idx;
   document.querySelectorAll('.step').forEach((el,i)=>{
@@ -313,202 +362,437 @@ function goToStep(idx) {
     if (i<idx) el.classList.add('done');
     else el.classList.remove('done');
   });
-  
   const step = STEPS[idx];
   document.getElementById('stageLabel').textContent = `${step.icon} ${step.name}`;
   document.getElementById('stageDesc').textContent = step.details;
   document.getElementById('playbackLabel').textContent = `Шаг ${idx}/${STEPS.length-1} — ${step.name}`;
   document.getElementById('playbackProgress').style.width = (idx/(STEPS.length-1)*100)+'%';
   
-  // Update vis steps for vectorization
   const visSection = document.getElementById('visStepsSection');
   const visSteps = document.getElementById('visSteps');
+  const diffSection = document.getElementById('diffSection');
   
-  if (idx===4) { // Vectorization
+  if (idx===4) {
     visSection.style.display = 'block';
+    diffSection.style.display = 'block';
     visSteps.innerHTML = [
       {name:'Binary', desc:'Adaptive threshold', icon:'◐'},
-      {name:'Masked', desc:'Исключены УГО и текст', icon:'◫'},
-      {name:'Skeleton', desc:'1px линии Guo-Hall', icon:'〰'},
-      {name:'Segments', desc:'Hough + RDP', icon:'╱'},
-      {name:'Junctions', desc:'Degree>=3, T/X узлы', icon:'●'},
-      {name:'Final', desc:'Overlay на оригинал', icon:'✓'},
+      {name:'Masked', desc:'Исключены УГО/текст', icon:'◫'},
+      {name:'Skeleton', desc:'1px Guo-Hall', icon:'〰'},
+      {name:'Segments', desc:'Hough+RDP', icon:'╱'},
+      {name:'Junctions', desc:'Degree>=3 T/X', icon:'●'},
+      {name:'Final', desc:'Overlay', icon:'✓'},
     ].map((s,i)=>`<div class=\"vis-step ${i===0?'active':''}\" onclick=\"setVecStep('${s.name.toLowerCase()}', this)\"><div class=\"vis-step-icon\">${s.icon}</div><div class=\"vis-step-info\"><div class=\"vis-step-name\">${s.name}</div><div class=\"vis-step-desc\">${s.desc}</div></div></div>`).join('');
-  } else if (idx===1) {
-    visSection.style.display = 'block';
-    visSteps.innerHTML = `<div class=\"vis-step active\"><div class=\"vis-step-icon\">◫</div><div class=\"vis-step-info\"><div class=\"vis-step-name\">SAHI Tiles</div><div class=\"vis-step-desc\">1024×1024 overlap 0.2, ${Math.ceil(4000/820)*Math.ceil(1000/820)} тайлов для A2x6</div></div></div>`;
+  } else if (idx===5 || idx===7) {
+    visSection.style.display = 'none';
+    diffSection.style.display = 'block';
   } else {
     visSection.style.display = 'none';
+    diffSection.style.display = idx===0 ? 'block' : 'none';
   }
   
-  // Update canvas
   updateCanvasForStep(idx);
 }
 
 function updateCanvasForStep(idx) {
-  const labelRight = document.getElementById('labelRight');
-  labelRight.textContent = STEPS[idx].name;
+  document.getElementById('labelRight').textContent = STEPS[idx].name;
+  if (!state.fileId) return;
   
-  if (!state.fileId) {
-    document.getElementById('infoLabel').textContent = 'Загрузите файл для визуализации';
-    return;
-  }
-  
+  const stageMap = {0:'original',1:'tiles',2:'detection',3:'ocr',4:'vectorization',5:'graph',6:'vlm',7:'graph'};
+  const stage = stageMap[idx];
   const imgRight = document.getElementById('imgRight');
   
-  // Map step to visualization endpoint
-  const stageMap = {
-    0: 'original',
-    1: 'tiles',
-    2: 'detection',
-    3: 'ocr',
-    4: 'vectorization',
-    5: 'graph',
-    6: 'vlm',
-    7: 'graph',
-  };
-  
-  const stage = stageMap[idx];
-  if (stage === 'original') {
+  if (stage==='original') {
     imgRight.src = `/api/image/${state.fileId}`;
-  } else if (stage === 'tiles') {
-    // Use tiles visualization if available, else original
-    imgRight.src = `/api/visualization/${state.fileId}/tiles`;
-    imgRight.onerror = () => { imgRight.src = `/api/image/${state.fileId}`; };
   } else {
     imgRight.src = `/api/visualization/${state.fileId}/${stage}`;
-    imgRight.onerror = () => { imgRight.src = `/api/image/${state.fileId}`; };
+    imgRight.onerror = ()=>{ imgRight.src = `/api/image/${state.fileId}`; };
   }
-  
   document.getElementById('emptyRight').style.display = 'none';
   imgRight.style.display = 'block';
   
-  if (idx===5 || idx===7) {
-    // Show graph mode hint
-    document.getElementById('infoLabel').textContent = 'Переключитесь в режим Граф для интерактива';
-  }
+  // Auto switch to diff for step 4, graph for step 5
+  if (idx===4 && state.mode!=='diff') setMode('diff');
+  if ((idx===5 || idx===7) && state.mode==='image') setMode('graph2d');
 }
 
 function setVecStep(name, el) {
   document.querySelectorAll('.vis-step').forEach(e=>e.classList.remove('active'));
   el.classList.add('active');
-  const imgRight = document.getElementById('imgRight');
-  // For demo, map to vectorization sub-steps
-  // In real, would call /api/visualization/{id}/vectorization/{substep}
-  imgRight.src = `/api/visualization/${state.fileId}/vectorization`;
+  document.getElementById('imgRight').src = `/api/visualization/${state.fileId}/vectorization/${name}`;
 }
 
+// Modes
 function setMode(mode) {
   state.mode = mode;
   document.querySelectorAll('[data-mode]').forEach(b=>b.classList.remove('active'));
-  document.querySelector(`[data-mode=\"${mode}\"]`).classList.add('active');
+  document.querySelector(`[data-mode=\"${mode}\"]`)?.classList.add('active');
   
-  document.getElementById('imageMode').style.display = mode==='image' || mode==='split' ? 'flex' : 'none';
-  document.getElementById('graphMode').style.display = mode==='graph' ? 'flex' : 'none';
+  document.getElementById('imageMode').style.display = (mode==='image' || mode==='split') ? 'flex' : 'none';
+  document.getElementById('diffMode').style.display = mode==='diff' ? 'flex' : 'none';
+  document.getElementById('graph2DMode').style.display = mode==='graph2d' ? 'flex' : 'none';
+  document.getElementById('graph3DMode').style.display = mode==='graph3d' ? 'flex' : 'none';
+  document.getElementById('diffToolbar').style.display = mode==='diff' ? 'flex' : 'none';
   
-  if (mode==='graph' && state.manifest) {
-    renderGraph();
-  }
-  
-  if (mode==='split') {
-    document.getElementById('paneLeft').style.display = 'flex';
-  } else if (mode==='image') {
-    document.getElementById('paneLeft').style.display = 'none';
-  }
+  if (mode==='graph2d' && state.manifest) renderGraph2D();
+  if (mode==='graph3d' && state.manifest) renderGraph3D();
+  if (mode==='diff' && state.fileId) initDiff();
 }
 
 function toggleSplit() {
-  state.split = !state.split;
-  document.getElementById('paneLeft').style.display = state.split ? 'flex' : 'none';
+  const left = document.getElementById('paneLeft');
+  left.style.display = left.style.display==='none' ? 'flex' : 'none';
 }
 
-function renderGraph() {
-  if (!state.manifest) return;
+// Diff
+function setDiffMode(mode) {
+  state.diffMode = mode;
+  document.querySelectorAll('[data-diff]').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll(`[data-diff=\"${mode}\"]`).forEach(b=>b.classList.add('active'));
   
-  // Convert manifest to vis-network format
-  const nodes = [];
-  const edges = [];
+  if (state.mode!=='diff') setMode('diff');
+  else initDiff();
+}
+
+async function initDiff() {
+  if (!state.fileId) return;
   
-  state.manifest.components?.forEach(comp=>{
-    nodes.push({id: comp.id, label: comp.designator, group: 'component', title: `${comp.type} ${comp.bbox}`, x: (comp.bbox[0]+comp.bbox[2])/2, y: (comp.bbox[1]+comp.bbox[3])/2});
-    comp.pins?.forEach(pin=>{
-      const pinId = `${comp.id}_pin_${pin.pin_number}`;
-      nodes.push({id: pinId, label: `${comp.designator}:${pin.pin_number}`, group: 'pin', title: `${pin.coord}`, x: pin.coord[0], y: pin.coord[1]});
-      edges.push({from: comp.id, to: pinId, dashes: true, color: {color: '#9a9aa3'}});
-    });
-  });
+  const orig = document.getElementById('diffImgOriginal');
+  const vec = document.getElementById('diffImgVector');
   
-  state.manifest.nets?.forEach(net=>{
-    const pinIds = net.connections?.map(c=>`${c.component_id}_pin_${c.pin}`) || [];
-    for (let i=0;i<pinIds.length;i++) {
-      for (let j=i+1;j<pinIds.length;j++) {
-        edges.push({from: pinIds[i], to: pinIds[j], label: net.net_id, color: {color: '#ef4444'}, width: 2});
-      }
+  // For side_by_side we use single image from backend, for slider we need two separate
+  if (state.diffMode === 'side_by_side' || state.diffMode === 'checker' || state.diffMode === 'overlay' || state.diffMode === 'difference' || state.diffMode === 'final_overlay') {
+    // Single image mode - backend returns combined
+    orig.style.display = 'none';
+    document.getElementById('diffOverlay').style.display = 'none';
+    document.getElementById('diffHandle').style.display = 'none';
+    
+    // Use imgRight as display for these modes
+    const imgRight = document.getElementById('imgRight');
+    imgRight.src = `/api/visualization/${state.fileId}/diff/${state.diffMode}`;
+    imgRight.style.display = 'block';
+    document.getElementById('emptyRight').style.display = 'none';
+    
+    // Switch to image mode to show it
+    if (state.mode === 'diff') {
+      document.getElementById('imageMode').style.display = 'flex';
+      document.getElementById('diffMode').style.display = 'none';
+      document.getElementById('paneLeft').style.display = 'none';
     }
-  });
-  
-  const container = document.getElementById('graphNetwork');
-  const data = {nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges)};
-  const options = {
-    groups: {
-      component: {color: {background: '#6c5cff', border: '#8b7cff'}, shape: 'box', font: {color: 'white'}},
-      pin: {color: {background: '#eab308', border: '#facc15'}, shape: 'dot', size: 8},
-    },
-    physics: {enabled: true, solver: 'forceAtlas2Based'},
-    interaction: {hover: true, tooltipDelay: 200},
-  };
-  
-  state.graph = new vis.Network(container, data, options);
-}
-
-function togglePlay() {
-  state.playing = !state.playing;
-  document.getElementById('playBtn').textContent = state.playing ? '⏸' : '▶';
-  
-  if (state.playing) {
-    playInterval = setInterval(()=>{
-      if (state.currentStep < STEPS.length-1) {
-        goToStep(state.currentStep+1);
-      } else {
-        togglePlay();
-      }
-    }, 2000);
-  } else {
-    clearInterval(playInterval);
+  } else if (state.diffMode === 'blend_slider') {
+    // Slider mode - need two images
+    document.getElementById('imageMode').style.display = 'none';
+    document.getElementById('diffMode').style.display = 'flex';
+    
+    orig.src = `/api/image/${state.fileId}`;
+    vec.src = `/api/visualization/${state.fileId}/diff/final_overlay`;
+    
+    orig.style.display = 'block';
+    vec.style.display = 'block';
+    document.getElementById('diffOverlay').style.display = 'block';
+    document.getElementById('diffHandle').style.display = 'flex';
+    
+    initSlider();
   }
 }
 
+function initSlider() {
+  const container = document.getElementById('diffContainer');
+  const overlay = document.getElementById('diffOverlay');
+  const handle = document.getElementById('diffHandle');
+  
+  let dragging = false;
+  
+  function updateSlider(x) {
+    const rect = container.getBoundingClientRect();
+    let pct = (x - rect.left) / rect.width * 100;
+    pct = Math.max(0, Math.min(100, pct));
+    overlay.style.width = pct + '%';
+    handle.style.left = pct + '%';
+  }
+  
+  handle.addEventListener('mousedown', e=>{ dragging = true; e.preventDefault(); });
+  window.addEventListener('mouseup', ()=>dragging=false);
+  window.addEventListener('mousemove', e=>{
+    if (!dragging) return;
+    updateSlider(e.clientX);
+  });
+  
+  container.addEventListener('click', e=>{
+    if (e.target === handle) return;
+    updateSlider(e.clientX);
+  });
+  
+  // Touch
+  handle.addEventListener('touchstart', e=>{ dragging = true; e.preventDefault(); });
+  window.addEventListener('touchend', ()=>dragging=false);
+  window.addEventListener('touchmove', e=>{
+    if (!dragging) return;
+    updateSlider(e.touches[0].clientX);
+  });
+  
+  // Init at 50%
+  setTimeout(()=>updateSlider(container.getBoundingClientRect().left + container.getBoundingClientRect().width*0.5), 100);
+}
+
+function setOpacity(val) {
+  document.getElementById('opacityLabel').textContent = val + '%';
+  const overlay = document.getElementById('diffOverlay');
+  if (overlay) overlay.style.opacity = val/100;
+}
+
+// Graph 2D
+function renderGraph2D() {
+  if (!state.manifest) return;
+  const nodes = [];
+  const edges = [];
+  state.manifest.components?.forEach(comp=>{
+    nodes.push({id: comp.id, label: comp.designator, group: 'component', title: `${comp.type} ${comp.bbox}`});
+    comp.pins?.forEach(pin=>{
+      const pinId = `${comp.id}_pin_${pin.pin_number}`;
+      nodes.push({id: pinId, label: `${comp.designator}:${pin.pin_number}`, group: 'pin', title: `${pin.coord}`});
+      edges.push({from: comp.id, to: pinId, dashes: true, color: {color: '#9a9aa3'}});
+    });
+  });
+  state.manifest.nets?.forEach(net=>{
+    const pinIds = net.connections?.map(c=>`${c.component_id}_pin_${c.pin}`) || [];
+    for (let i=0;i<pinIds.length;i++) for (let j=i+1;j<pinIds.length;j++) edges.push({from: pinIds[i], to: pinIds[j], label: net.net_id, color: {color: '#ef4444'}, width: 2});
+  });
+  const container = document.getElementById('graphNetwork');
+  const data = {nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges)};
+  const options = {
+    groups: {component: {color: {background: '#6c5cff', border: '#8b7cff'}, shape: 'box', font: {color: 'white'}}, pin: {color: {background: '#eab308', border: '#facc15'}, shape: 'dot', size: 8}},
+    physics: {enabled: true, solver: 'forceAtlas2Based'},
+    interaction: {hover: true},
+  };
+  state.graph = new vis.Network(container, data, options);
+}
+
+// Graph 3D - Three.js
+function renderGraph3D() {
+  const canvas = document.getElementById('graph3D');
+  const container = canvas.parentElement;
+  
+  // Clean previous
+  if (state.graph3D.renderer) {
+    state.graph3D.renderer.dispose();
+    container.removeChild(state.graph3D.renderer.domElement);
+  }
+  
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  
+  // Scene
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x050508);
+  scene.fog = new THREE.Fog(0x050508, 800, 2000);
+  
+  // Camera
+  const camera = new THREE.PerspectiveCamera(60, width/height, 1, 5000);
+  camera.position.set(0, 0, 800);
+  
+  // Renderer
+  const renderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, alpha: true});
+  renderer.setSize(width, height);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  
+  // Controls
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.1;
+  controls.autoRotate = false;
+  controls.autoRotateSpeed = 0.5;
+  
+  // Lights
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambient);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(300, 500, 400);
+  scene.add(dirLight);
+  const pointLight = new THREE.PointLight(0x6c5cff, 1, 1000);
+  pointLight.position.set(0, 0, 200);
+  scene.add(pointLight);
+  
+  // Grid
+  const gridHelper = new THREE.GridHelper(2000, 20, 0x2a2a30, 0x1c1c1f);
+  gridHelper.rotation.x = Math.PI/2;
+  gridHelper.position.z = -50;
+  scene.add(gridHelper);
+  
+  // Fetch 3D data
+  fetch(`/api/graph/${state.fileId}/3d`)
+    .then(r=>r.json())
+    .then(data=>{
+      document.getElementById('graph3DStats').textContent = `3D: ${data.stats.total_nodes} узлов, ${data.stats.total_edges} ребер, ${data.stats.components} компонентов, ${data.stats.nets} цепей`;
+      
+      // Create nodes
+      const nodeMeshes = {};
+      
+      data.nodes.forEach(node=>{
+        let geometry, material, mesh;
+        
+        if (node.type === 'component') {
+          if (node.component_type === 'connector') {
+            geometry = new THREE.BoxGeometry(24, 40, 12);
+          } else {
+            geometry = new THREE.SphereGeometry(node.size || 8, 16, 16);
+          }
+          const color = new THREE.Color(node.color_hex || '#6c5cff');
+          material = new THREE.MeshPhongMaterial({color: color, shininess: 100});
+          mesh = new THREE.Mesh(geometry, material);
+        } else if (node.type === 'pin') {
+          geometry = new THREE.SphereGeometry(4, 12, 12);
+          material = new THREE.MeshPhongMaterial({color: 0xeab308, emissive: 0x332200});
+          mesh = new THREE.Mesh(geometry, material);
+        } else { // wire
+          geometry = new THREE.SphereGeometry(1.5, 8, 8);
+          material = new THREE.MeshBasicMaterial({color: 0x646464, transparent: true, opacity: 0.6});
+          mesh = new THREE.Mesh(geometry, material);
+        }
+        
+        // Position - center around 0,0 and scale
+        mesh.position.set(
+          (node.x - 500) * 1.2,
+          -(node.y - 400) * 1.2,
+          node.z * 2
+        );
+        mesh.userData = node;
+        
+        scene.add(mesh);
+        nodeMeshes[node.id] = mesh;
+        
+        // Label sprite for components
+        if (node.type === 'component') {
+          const canvas = document.createElement('canvas');
+          canvas.width = 128; canvas.height = 32;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = 'rgba(0,0,0,0.7)';
+          ctx.fillRect(0,0,128,32);
+          ctx.fillStyle = 'white';
+          ctx.font = '14px Inter';
+          ctx.fillText(node.label, 8, 20);
+          const texture = new THREE.CanvasTexture(canvas);
+          const spriteMat = new THREE.SpriteMaterial({map: texture});
+          const sprite = new THREE.Sprite(spriteMat);
+          sprite.position.set(mesh.position.x, mesh.position.y + 20, mesh.position.z + 10);
+          sprite.scale.set(60, 15, 1);
+          scene.add(sprite);
+        }
+      });
+      
+      // Create edges as lines
+      data.edges.forEach(edge=>{
+        const fromMesh = nodeMeshes[edge.from];
+        const toMesh = nodeMeshes[edge.to];
+        if (!fromMesh || !toMesh) return;
+        
+        const points = [fromMesh.position.clone(), toMesh.position.clone()];
+        
+        // If wire with path, use intermediate points
+        if (edge.path_points && edge.path_points.length > 0) {
+          // Already handled via wire nodes
+        }
+        
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        let material;
+        if (edge.type === 'net' || edge.type === 'wire') {
+          material = new THREE.LineBasicMaterial({color: 0xef4444, linewidth: 2});
+        } else {
+          material = new THREE.LineDashedMaterial({color: 0x666666, dashSize: 4, gapSize: 2});
+          geometry.computeLineDistances();
+        }
+        const line = new THREE.Line(geometry, material);
+        scene.add(line);
+      });
+      
+      state.graph3D.nodes = Object.values(nodeMeshes);
+    })
+    .catch(e=>{
+      console.error('3D graph failed', e);
+      document.getElementById('graph3DStats').textContent = 'Ошибка загрузки 3D графа: ' + e;
+    });
+  
+  // Animation loop
+  function animate() {
+    if (!state.graph3D.renderer) return;
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+    
+    // Gentle floating animation
+    if (state.graph3D.animating) {
+      const time = Date.now() * 0.001;
+      state.graph3D.nodes.forEach((mesh, i)=>{
+        if (mesh.userData.type === 'wire') {
+          mesh.position.z += Math.sin(time + i*0.1) * 0.1;
+        }
+      });
+    }
+  }
+  animate();
+  
+  // Handle resize
+  window.addEventListener('resize', ()=>{
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    camera.aspect = w/h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+  });
+  
+  state.graph3D = {scene, camera, renderer, controls, nodes: [], edges: [], animating: false};
+}
+
+function reset3DView() {
+  if (state.graph3D.camera && state.graph3D.controls) {
+    state.graph3D.camera.position.set(0, 0, 800);
+    state.graph3D.controls.target.set(0, 0, 0);
+    state.graph3D.controls.update();
+  }
+}
+
+function toggle3DAnimation() {
+  state.graph3D.animating = !state.graph3D.animating;
+  if (state.graph3D.controls) {
+    state.graph3D.controls.autoRotate = state.graph3D.animating;
+  }
+}
+
+// Playback
+let playInterval = null;
+function togglePlay() {
+  state.playing = !state.playing;
+  document.getElementById('playBtn').textContent = state.playing ? '⏸' : '▶';
+  if (state.playing) {
+    playInterval = setInterval(()=>{ if (state.currentStep < STEPS.length-1) goToStep(state.currentStep+1); else togglePlay(); }, 2000);
+  } else clearInterval(playInterval);
+}
 function nextStep() { if (state.currentStep < STEPS.length-1) goToStep(state.currentStep+1); }
 function prevStep() { if (state.currentStep > 0) goToStep(state.currentStep-1); }
 function seek(e) {
   const rect = e.currentTarget.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const pct = x / rect.width;
-  const idx = Math.round(pct * (STEPS.length-1));
-  goToStep(idx);
+  const pct = (e.clientX - rect.left) / rect.width;
+  goToStep(Math.round(pct * (STEPS.length-1)));
 }
-
-function zoom(factor, pane) {
-  // Simplified zoom
-  const img = pane===0 ? document.getElementById('imgLeft') : document.getElementById('imgRight');
-  // Would implement proper zoom/pan like in index.html
+function zoom(factor) {
+  // Implement zoom for current mode
+  if (state.mode === 'graph3d' && state.graph3D.camera) {
+    state.graph3D.camera.position.z *= 1/factor;
+  }
 }
-
-function fitView() {
-  // Fit both panes
-}
-
+function fitView() {}
 function switchRightTab(name) {
   document.getElementById('rightJson').style.display = name==='json' ? 'block' : 'none';
   document.getElementById('rightNets').style.display = name==='nets' ? 'block' : 'none';
+  document.querySelectorAll('[data-rtab]').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`[data-rtab=\"${name}\"]`).classList.add('active');
 }
-
 async function generateReport() {
-  if (!state.fileId) { alert('Загрузите файл сначала'); return; }
+  if (!state.fileId) { alert('Загрузите файл'); return; }
   window.open(`/api/report/${state.fileId}`, '_blank');
 }
 
-// Upload handling (same as index.html but simplified)
+// Upload
 async function handleUpload(file) {
   const fd = new FormData();
   fd.append('file', file);
@@ -520,9 +804,7 @@ async function handleUpload(file) {
   document.getElementById('imgLeft').style.display = 'block';
   document.getElementById('imgRight').src = `/api/image/${state.fileId}`;
   document.getElementById('imgRight').style.display = 'block';
-  document.getElementById('emptyRight').style.display = 'none';
   
-  // Load result if exists
   try {
     const r = await fetch(`/api/result/${state.fileId}`);
     const manifest = await r.json();
@@ -530,22 +812,21 @@ async function handleUpload(file) {
     document.getElementById('mComp').textContent = manifest.components?.length||0;
     document.getElementById('mNets').textContent = manifest.nets?.length||0;
     document.getElementById('mIssues').textContent = manifest.human_review_required?.length||0;
-    document.getElementById('jsonView').textContent = JSON.stringify(manifest, null, 2).slice(0,2000)+'...';
+    document.getElementById('jsonView').textContent = JSON.stringify(manifest, null, 2).slice(0,3000)+'...';
     
-    // Comp list
-    document.getElementById('compList').innerHTML = manifest.components?.slice(0,10).map(c=>`<div style=\"padding:6px 8px;background:#1c1c1f;border:1px solid #2a2a30;border-radius:6px;font-size:11px\"><b>${c.designator}</b> ${c.type} ${c.bbox}</div>`).join('') || 'Нет';
+    // Legend
+    const byClass = {};
+    manifest.components?.forEach(c=>{ byClass[c.type] = (byClass[c.type]||0)+1; });
+    document.getElementById('legend').innerHTML = Object.entries(byClass).map(([cls,count])=>`<div class=\"legend-item\"><div class=\"legend-dot\" style=\"background:${GOST_COLORS[cls]||'#888'}\"></div> ${cls} <span class=\"legend-count\">${count}</span></div>`).join('') || 'Нет данных';
+    
+    document.getElementById('compList').innerHTML = manifest.components?.slice(0,10).map(c=>`<div style=\"padding:6px 8px;background:#1c1c1f;border:1px solid #2a2a30;border-radius:6px;font-size:11px\"><b>${c.designator}</b> ${c.type}</div>`).join('') || 'Нет';
   } catch(e) {}
   
   goToStep(0);
 }
 
-// Drag&drop
 document.addEventListener('dragover', e=>e.preventDefault());
-document.addEventListener('drop', e=>{
-  e.preventDefault();
-  const file = e.dataTransfer.files[0];
-  if (file) handleUpload(file);
-});
+document.addEventListener('drop', e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) handleUpload(f); });
 
 // Init
 goToStep(0);
