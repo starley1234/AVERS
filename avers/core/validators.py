@@ -164,7 +164,7 @@ class SlicedDetector:
             model_path=self.model_path,
             confidence_threshold=self.confidence_threshold,
             device=device,
-            img_size=640,
+            img_size=self.config.detection.img_size,
         )
         self._yolo_detector = YOLODetector(cfg)
         if not self._yolo_detector.load():
@@ -718,10 +718,10 @@ class ProductionPipeline:
         env = os.getenv("AVERS_MODEL_PATH")
         if env:
             candidates.append(Path(env).expanduser())
-        candidates += [
-            Path("/tmp/avers_runs/avers_yolo/weights/best.pt"),
-            Path("/tmp/avers_runs/avers_rtdetr/weights/best.pt"),
-        ]
+        # все прогоны обучения (avers_yolo, avers_yolo2, ... avers_rtdetrN)
+        runs_dir = Path("/tmp/avers_runs")
+        for pattern in ("avers_yolo*/weights/best.pt", "avers_rtdetr*/weights/best.pt"):
+            candidates += sorted(runs_dir.glob(pattern))
         existing = [c for c in candidates if c.exists()]
         if existing:
             best = max(existing, key=lambda c: c.stat().st_mtime)

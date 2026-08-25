@@ -98,8 +98,60 @@ python -m avers dataset train --data /tmp/avers_dataset/dataset.yaml \
 
 - `--device` по умолчанию `auto`: возьмёт CUDA, если есть, иначе CPU (раньше был жёсткий `cuda` и падал без GPU).
 - Результаты: `/tmp/avers_runs/avers_yolo|avers_rtdetr/weights/best.pt` + `best.onnx`.
-- Чтобы пайплайн использовал обученную модель — пропишите путь в `config.yaml`:
-  `detection.model_path: /tmp/avers_runs/avers_yolo/weights/best.pt`.
+- Чтобы пайплайн использовал обученную модель — пропишите путь в `config.yaml`
+  (`detection.model_path: ...`) или просто запустите обработку: свежий `best.pt`
+  подхватится автоматически.
+
+### Как улучшить построение линий (стадии 4–5)
+
+Линии привязываются (snap) к детектированным пинам, поэтому качество линий =
+качество детекции + настройки масштаба:
+
+| Симптом | Что крутить в `config.yaml` |
+|---|---|
+| Концы проводов «не дотягиваются» до пинов | `graph_synthesis.snap_radius` и `vectorization.snap_radius` (по умолчанию 15 px; для сканов 5000+ px ставьте 30–80) |
+| Лишние соединения на перекрёстках | уменьшить `snap_radius`; включить VLM-арбитраж (раздел 3) — он разрешает «соединение/проход мимо» |
+| Текст не привязывается к компонентам | `graph_synthesis.text_association_radius` (50 px → 100–200 для крупных листов) |
+| Линии слишком угловатые / теряются изломы | `vectorization.rdp_epsilon` (2.0 → 1.0 точнее) |
+| Мелкие УГО не находятся | `detection.img_size: 960` (учитывается тайловой детекцией), `detection.confidence_threshold: 0.15` |
+| Толстые линии скана теряются | `vectorization.line_thickness_threshold` (3 → 2) |
+| Склейка отрезков одной линии | `graph_synthesis.merge_collinear_segments: true`, `merge_tolerance: 5-10` |
+
+И главное: скан 300+ DPI (TIF/PNG, не пережатый JPG) — половина проблем с линиями решается качеством входа.
+
+### Сценарий Г — дообучение на реальных сканах (fine-tune)
+
+Синтетика даёт базу, но боевого качества достигают дообучением на своей разметке.
+
+```bash
+# 1. Разметить 50–200 реальных сканов (300 DPI, разнообразных).
+#    Открыть web → http://localhost:8000/annotator:
+#    - загрузить скан, рисовать боксы классов УГО (клавиши 0-8),
+#    - Export YOLO → /tmp/avers_real_dataset (получится images/ labels/ + dataset.yaml)
+
+# 2. Смешать синтетику с реальными данными (синтетика 50-80% + реальные 20-50%):
+python -m avers dataset public mix \
+    --synthetic /tmp/avers_dataset/dataset.yaml \
+    --public real:/tmp/avers_real_dataset \
+    -o /tmp/avers_mixed
+
+# 3. Дообучить ОТ текущих весов (не с нуля!):
+python -m avers dataset train \
+    --data /tmp/avers_mixed/dataset.yaml \
+    --model yolo11n \
+    --pretrained /tmp/avers_runs/avers_yolo/weights/best.pt \
+    --epochs 50 --batch 8 --imgsz 960
+
+# 4. Подключение - автоматически: пайплайн сам берёт САМЫЙ СВЕЖИЙ best.pt
+#    из /tmp/avers_runs/avers_*; или пропишите путь в config.yaml → detection.model_path
+```
+
+Советы:
+- **Итерируйте по ошибкам**: нашли систематическую ошибку → разметьте именно такие места
+  → добавьте в датасет → переобучите. 20–50 размеченных листов уже заметно улучшают модель.
+- `--imgsz 960` (или 1280) помогает находить мелкие УГО; при нехватке памяти снижайте `--batch`.
+- lr для fine-tune уже подходящий (AdamW, lr0=1e-4) — менять не нужно.
+- Следите за **recall по `pin` и `connector_body`** в метриках: от них зависит построение линий.
 
 ---
 
