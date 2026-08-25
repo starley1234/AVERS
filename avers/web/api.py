@@ -433,91 +433,256 @@ async def get_result(file_id: str):
 
 
 @router.get("/visualization/{file_id}/{stage}")
-async def get_visualization(file_id: str, stage: str):
-    """Get visualization for specific stage."""
+async def get_visualization(file_id: str, stage: str, page: int = Query(0, ge=0)):
+    """Get visualization for specific stage - enhanced with PDF support."""
     if file_id not in files_db:
         raise HTTPException(404, "File not found")
     
     file_info = files_db[file_id]
-    image_path = Path(file_info["path"])
     
-    pil_img = Image.open(image_path)
-    if pil_img.mode != "RGB":
-        pil_img = pil_img.convert("RGB")
-    image = np.array(pil_img)
+    # Load image - handle PDF
+    try:
+        if file_info.get("is_pdf") and file_id in pdf_pages_db:
+            pages = pdf_pages_db[file_id]
+            if page < len(pages):
+                pil_img = Image.open(pages[page])
+                if pil_img.mode != "RGB":
+                    pil_img = pil_img.convert("RGB")
+                image = np.array(pil_img)
+            else:
+                raise HTTPException(404, f"Page {page} not found")
+        else:
+            from avers.utils.image_helpers import load_image_auto
+            pages = load_image_auto(Path(file_info["path"]), dpi=300, max_pages=1)
+            image = pages[0] if pages else np.zeros((100, 100, 3), dtype=np.uint8)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load image: {e}")
     
-    vis_path = RESULTS_DIR / f"{file_id}_vis_{stage}.png"
+    vis_path = RESULTS_DIR / f"{file_id}_vis_{stage}_p{page}.png"
     
     try:
-        if stage == "detection":
+        if stage == "tiles":
+            from avers.web.visualization import visualize_sahi_tiles
+            vis = visualize_sahi_tiles(image, tile_size=1024, overlap_ratio=0.2)
+            cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
+        
+        elif stage == "detection":
             from avers.core.validators import SlicedDetector
+            from avers.web.visualization import visualize_detections_enhanced
             detector = SlicedDetector(device="cpu")
             detections = detector.detect(image)
-            
-            vis = image.copy()
-            for det in detections:
-                x1, y1, x2, y2 = det["bbox"]
-                cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(vis, f"{det['category']} {det['confidence']:.2f}", 
-                           (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,0), 1)
+            vis = visualize_detections_enhanced(image, detections)
             cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
         
         elif stage == "ocr":
             from avers.core.validators import SchematicOCR
+            from avers.web.visualization import visualize_ocr_enhanced
             ocr = SchematicOCR()
             texts = ocr.recognize(image)
-            
-            vis = image.copy()
-            for t in texts:
-                x1, y1, x2, y2 = t["bbox"]
-                cv2.rectangle(vis, (x1, y1), (x2, y2), (255, 0, 0), 1)
-                cv2.putText(vis, t["text"], (x1, y1-5), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,0,0), 1)
+            vis = visualize_ocr_enhanced(image, texts)
             cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
         
         elif stage == "vectorization":
-            from avers.core.validators import WireVectorizer
-            vec = WireVectorizer()
-            segments, junctions = vec.vectorize(image)
+            from avers.web.visualization import visualize_vectorization_steps
+            # Get exclusion bboxes from manifest if available
+            exclusion = []
+            if file_id in manifests_db:
+                manifest = manifests_db[file_id]
+                exclusion = [c.bbox for c in manifest.components]
             
-            vis = image.copy()
-            for seg in segments:
-                cv2.line(vis, seg.start, seg.end, (100, 100, 100), 2)
-            for j in junctions:
-                cv2.circle(vis, j, 5, (0, 0, 255), -1)
+            steps = visualize_vectorization_steps(image, exclusion if exclusion else None)
+            # For main endpoint, return final
+            vis = steps.get("final", image)
             cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
         
         elif stage == "graph":
-            # Graph visualization requires manifest
+            if file_id not in manifests_db:
+                # Try to generate from current image
+                from avers.core.validators import SlicedDetector, WireVectorizer
+                from avers.stages.stage5_graph_synthesis import GraphBuilder, PinReference
+                from avers.web.visualization import visualize_detections_enhanced
+                
+                detector = SlicedDetector(device="cpu")
+                detections = detector.detect(image)
+                
+                vis = image.copy()
+                for det in detections:
+                    x1, y1, x2, y2 = det["bbox"]
+                    cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
+            else:
+                manifest = manifests_db[file_id]
+                vis = image.copy()
+                for comp in manifest.components:
+                    x1, y1, x2, y2 = comp.bbox
+                    cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(vis, comp.designator, (x1, y1-5),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
+                    for pin in comp.pins:
+                        cv2.circle(vis, tuple(pin.coord), 4, (255, 0, 0), -1)
+                for net in manifest.nets:
+                    pts = net.path_points
+                    for i in range(len(pts)-1):
+                        cv2.line(vis, pts[i], pts[i+1], (0, 0, 255), 1)
+                cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
+        
+        elif stage == "vlm":
+            # VLM ROI visualization - show issue crops
             if file_id not in manifests_db:
                 raise HTTPException(404, "Run processing first")
             manifest = manifests_db[file_id]
             
-            vis = image.copy()
-            # Draw components
-            for comp in manifest.components:
-                x1, y1, x2, y2 = comp.bbox
-                cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(vis, comp.designator, (x1, y1-5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1)
-                for pin in comp.pins:
-                    cv2.circle(vis, tuple(pin.coord), 4, (255, 0, 0), -1)
-            
-            # Draw nets
-            for net in manifest.nets:
-                pts = net.path_points
-                for i in range(len(pts)-1):
-                    cv2.line(vis, pts[i], pts[i+1], (0, 0, 255), 1)
+            # Create grid of issue ROIs
+            issues = manifest.human_review_required[:6]
+            if not issues:
+                # No issues - create placeholder
+                vis = np.ones((256, 512, 3), dtype=np.uint8) * 255
+                cv2.putText(vis, "No issues for VLM arbitration", (20, 128),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 1)
+            else:
+                from avers.web.visualization import visualize_vlm_arbitration
+                # For demo, show first issue
+                first_issue = issues[0]
+                viz_dict = visualize_vlm_arbitration(image, first_issue.bbox, roi_size=256)
+                vis = viz_dict.get("context", image)
+                # Resize for display
+                if vis.shape[0] > 1000 or vis.shape[1] > 1000:
+                    vis = cv2.resize(vis, (512, 512))
             
             cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
         
         else:
-            raise HTTPException(400, f"Unknown stage: {stage}")
+            raise HTTPException(400, f"Unknown stage: {stage}. Known: tiles, detection, ocr, vectorization, graph, vlm")
         
         return FileResponse(str(vis_path))
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Visualization failed: {e}")
+
+
+@router.get("/visualization/{file_id}/vectorization/{substep}")
+async def get_vectorization_substep(file_id: str, substep: str, page: int = Query(0, ge=0)):
+    """Get specific vectorization substep: binary, masked, skeleton, segments, junctions, final."""
+    if file_id not in files_db:
+        raise HTTPException(404, "File not found")
+    
+    file_info = files_db[file_id]
+    
+    try:
+        if file_info.get("is_pdf") and file_id in pdf_pages_db:
+            pages = pdf_pages_db[file_id]
+            pil_img = Image.open(pages[page])
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            image = np.array(pil_img)
+        else:
+            from avers.utils.image_helpers import load_image_auto
+            pages = load_image_auto(Path(file_info["path"]), dpi=300, max_pages=1)
+            image = pages[0] if pages else np.zeros((100, 100, 3), dtype=np.uint8)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load image: {e}")
+    
+    vis_path = RESULTS_DIR / f"{file_id}_vec_{substep}_p{page}.png"
+    
+    try:
+        from avers.web.visualization import visualize_vectorization_steps
+        
+        exclusion = []
+        if file_id in manifests_db:
+            manifest = manifests_db[file_id]
+            exclusion = [c.bbox for c in manifest.components]
+        
+        steps = visualize_vectorization_steps(image, exclusion if exclusion else None)
+        
+        if substep not in steps:
+            raise HTTPException(400, f"Unknown substep: {substep}. Known: {list(steps.keys())}")
+        
+        vis = steps[substep]
+        cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
+        return FileResponse(str(vis_path))
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Visualization failed: {e}")
+
+
+@router.get("/graph/{file_id}/interactive")
+async def get_interactive_graph(file_id: str):
+    """Get interactive graph JSON for D3/vis-network."""
+    if file_id not in files_db:
+        raise HTTPException(404, "File not found")
+    
+    if file_id not in manifests_db:
+        result_path = RESULTS_DIR / f"{file_id}.json"
+        if not result_path.exists():
+            raise HTTPException(404, "Run processing first")
+        with open(result_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        from avers.core.types import AVERSManifest
+        manifest = AVERSManifest(**data)
+    else:
+        manifest = manifests_db[file_id]
+    
+    try:
+        from avers.web.visualization import visualize_graph_interactive
+        graph_data = visualize_graph_interactive(manifest.components, manifest.nets)
+        return graph_data
+    except Exception as e:
+        raise HTTPException(500, f"Graph generation failed: {e}")
+
+
+@router.get("/report/{file_id}")
+async def generate_report(file_id: str, page: int = Query(0, ge=0)):
+    """Generate HTML report with all stages."""
+    if file_id not in files_db:
+        raise HTTPException(404, "File not found")
+    
+    file_info = files_db[file_id]
+    
+    try:
+        if file_info.get("is_pdf") and file_id in pdf_pages_db:
+            pages = pdf_pages_db[file_id]
+            pil_img = Image.open(pages[page])
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            image = np.array(pil_img)
+        else:
+            from avers.utils.image_helpers import load_image_auto
+            pages = load_image_auto(Path(file_info["path"]), dpi=300, max_pages=1)
+            image = pages[0] if pages else np.zeros((100, 100, 3), dtype=np.uint8)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load image: {e}")
+    
+    if file_id not in manifests_db:
+        result_path = RESULTS_DIR / f"{file_id}.json"
+        if not result_path.exists():
+            raise HTTPException(404, "Run processing first")
+        with open(result_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        from avers.core.types import AVERSManifest
+        manifest = AVERSManifest(**data)
+    else:
+        manifest = manifests_db[file_id]
+    
+    # Get job timings
+    job_timings = {}
+    for job in jobs_db.values():
+        if job["file_id"] == file_id:
+            job_timings = job.get("stage_timings", {})
+            break
+    
+    try:
+        from avers.web.visualization import create_pipeline_report
+        
+        report_path = RESULTS_DIR / f"{file_id}_report_p{page}.html"
+        create_pipeline_report(image, manifest, job_timings, report_path)
+        
+        return FileResponse(str(report_path), media_type="text/html")
+    except Exception as e:
+        raise HTTPException(500, f"Report generation failed: {e}")
 
 
 @router.put("/components/{file_id}/{comp_id}")

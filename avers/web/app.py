@@ -56,6 +56,13 @@ def create_app() -> FastAPI:
             "frontend": "Frontend not built yet - check /docs for API"
         }
     
+    @app.get("/visualize")
+    async def serve_visualize():
+        vis_path = frontend_dir / "visualize.html"
+        if vis_path.exists():
+            return FileResponse(str(vis_path))
+        return {"message": "Visualize page not found"}
+    
     @app.get("/annotator")
     async def serve_annotator():
         annotator_path = frontend_dir / "annotator.html"
