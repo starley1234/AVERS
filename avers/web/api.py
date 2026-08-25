@@ -34,10 +34,14 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR = Path("/tmp/avers_results")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+PDF_CACHE_DIR = Path("/tmp/avers_pdf_cache")
+PDF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 # Global state
 files_db: Dict[str, dict] = {}
 jobs_db: Dict[str, dict] = {}
 manifests_db: Dict[str, AVERSManifest] = {}
+pdf_pages_db: Dict[str, List[Path]] = {}  # file_id -> list of page image paths
 
 router = APIRouter(prefix="/api")
 
@@ -46,9 +50,13 @@ def _generate_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _is_pdf_file(filename: str) -> bool:
+    return filename.lower().endswith(".pdf")
+
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_file(file: UploadFile = File(...)):
-    """Upload schematic image."""
+    """Upload schematic image or PDF."""
     file_id = _generate_id()
     ext = Path(file.filename).suffix.lower() or ".png"
     save_path = UPLOAD_DIR / f"{file_id}{ext}"
@@ -58,7 +66,67 @@ async def upload_file(file: UploadFile = File(...)):
         content = await file.read()
         f.write(content)
     
-    # Get image dimensions
+    # Handle PDF - extract pages
+    if _is_pdf_file(file.filename):
+        try:
+            from avers.utils.pdf_loader import PDFLoader, is_pdf
+            from avers.utils.image_helpers import load_image_auto
+            
+            loader = PDFLoader()
+            info = loader.get_info(save_path)
+            num_pages = info.get("num_pages", 1)
+            if isinstance(num_pages, str):
+                num_pages = 1
+            
+            # Load pages as images
+            pages = load_image_auto(save_path, dpi=300, max_pages=20)  # Limit to 20 pages for safety
+            
+            # Save each page as separate image for preview
+            page_paths = []
+            for i, page_img in enumerate(pages):
+                page_path = PDF_CACHE_DIR / f"{file_id}_page_{i:04d}.jpg"
+                # Convert RGB to BGR for cv2
+                import cv2
+                bgr = cv2.cvtColor(page_img, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(str(page_path), bgr)
+                page_paths.append(page_path)
+            
+            pdf_pages_db[file_id] = page_paths
+            
+            # Use first page for dimensions
+            if pages:
+                height, width = pages[0].shape[:2]
+            else:
+                width, height = 0, 0
+            
+            files_db[file_id] = {
+                "id": file_id,
+                "filename": file.filename,
+                "path": str(save_path),
+                "width": width,
+                "height": height,
+                "size": len(content),
+                "created_at": datetime.now(),
+                "is_pdf": True,
+                "num_pages": len(pages),
+                "page_paths": [str(p) for p in page_paths],
+            }
+            
+            return UploadResponse(
+                file_id=file_id,
+                filename=file.filename,
+                width=width,
+                height=height,
+                size_bytes=len(content),
+                preview_url=f"/api/image/{file_id}?page=0"
+            )
+        
+        except Exception as e:
+            # Fallback - treat as regular file
+            import logging
+            logging.getLogger("avers.web").warning(f"PDF processing failed: {e}, treating as single file")
+    
+    # Regular image handling
     try:
         pil_img = Image.open(save_path)
         width, height = pil_img.size
@@ -73,6 +141,8 @@ async def upload_file(file: UploadFile = File(...)):
         "height": height,
         "size": len(content),
         "created_at": datetime.now(),
+        "is_pdf": False,
+        "num_pages": 1,
     }
     
     return UploadResponse(
@@ -92,13 +162,66 @@ async def list_files():
 
 
 @router.get("/image/{file_id}")
-async def get_image(file_id: str):
-    """Get original image."""
+async def get_image(file_id: str, page: int = Query(0, ge=0)):
+    """Get original image or PDF page."""
     if file_id not in files_db:
         raise HTTPException(404, "File not found")
     
-    path = files_db[file_id]["path"]
+    file_info = files_db[file_id]
+    
+    # PDF page handling
+    if file_info.get("is_pdf") and file_id in pdf_pages_db:
+        pages = pdf_pages_db[file_id]
+        if page < len(pages):
+            return FileResponse(str(pages[page]))
+        else:
+            raise HTTPException(404, f"Page {page} not found, PDF has {len(pages)} pages")
+    
+    path = file_info["path"]
     return FileResponse(path)
+
+
+@router.get("/pdf/{file_id}/info")
+async def get_pdf_info(file_id: str):
+    """Get PDF info and pages."""
+    if file_id not in files_db:
+        raise HTTPException(404, "File not found")
+    
+    file_info = files_db[file_id]
+    if not file_info.get("is_pdf"):
+        raise HTTPException(400, "File is not PDF")
+    
+    pages = pdf_pages_db.get(file_id, [])
+    
+    return {
+        "file_id": file_id,
+        "filename": file_info["filename"],
+        "num_pages": file_info.get("num_pages", len(pages)),
+        "pages": [
+            {
+                "page_number": i,
+                "preview_url": f"/api/image/{file_id}?page={i}",
+                "path": str(p),
+            }
+            for i, p in enumerate(pages)
+        ]
+    }
+
+
+@router.get("/pdf/{file_id}/page/{page_number}")
+async def get_pdf_page(file_id: str, page_number: int):
+    """Get specific PDF page as image."""
+    if file_id not in files_db:
+        raise HTTPException(404, "File not found")
+    
+    if file_id not in pdf_pages_db:
+        raise HTTPException(404, "PDF pages not found, re-upload")
+    
+    pages = pdf_pages_db[file_id]
+    if page_number < 0 or page_number >= len(pages):
+        raise HTTPException(404, f"Page {page_number} not found")
+    
+    return FileResponse(str(pages[page_number]))
 
 
 @router.post("/process/{file_id}")
@@ -134,28 +257,23 @@ async def start_processing(
 
 
 async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
-    """Background pipeline execution."""
+    """Background pipeline execution - supports PDF multi-page."""
     job = jobs_db[job_id]
     job["status"] = JobStatus.RUNNING
     job["updated_at"] = datetime.now()
     
     try:
-        # Load image
         file_info = files_db[file_id]
         image_path = Path(file_info["path"])
         
-        pil_img = Image.open(image_path)
-        if pil_img.mode != "RGB":
-            pil_img = pil_img.convert("RGB")
-        image = np.array(pil_img)
+        # Load images - handle PDF multi-page via unified loader
+        from avers.utils.image_helpers import load_image_auto
         
         # Config
         config = AVERSConfig()
         if request.config_overrides:
-            # Apply overrides
             for key, value in request.config_overrides.items():
                 if hasattr(config, key):
-                    # Nested update
                     if isinstance(value, dict):
                         for subkey, subval in value.items():
                             if hasattr(getattr(config, key), subkey):
@@ -163,32 +281,117 @@ async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
                     else:
                         setattr(config, key, value)
         
-        # Pipeline with progress tracking
         pipeline = ProductionPipeline(config)
         
-        # Simulate stage progress
-        stages = ["detection", "ocr", "vectorization", "graph_synthesis", "vlm_arbitration"]
+        # Check if PDF
+        is_pdf = file_info.get("is_pdf", False)
+        page_to_process = request.config_overrides.get("pdf_page", 0) if request.config_overrides else 0
         
-        # Run actual pipeline
-        job["current_stage"] = "detection"
-        job["progress"] = 10
-        job["updated_at"] = datetime.now()
+        if is_pdf and file_id in pdf_pages_db:
+            # For PDF, process specified page or all pages
+            process_all_pages = request.config_overrides.get("pdf_process_all", False) if request.config_overrides else False
+            
+            if process_all_pages:
+                # Process all pages and merge manifests
+                all_pages = load_image_auto(image_path, dpi=300)
+                job["warnings"] = [f"PDF with {len(all_pages)} pages, processing all"]
+                
+                merged_components = []
+                merged_nets = []
+                merged_issues = []
+                total_timings = {}
+                
+                for page_idx, page_image in enumerate(all_pages):
+                    job["current_stage"] = f"detection (page {page_idx+1}/{len(all_pages)})"
+                    job["progress"] = int(10 + 80 * page_idx / len(all_pages))
+                    job["updated_at"] = datetime.now()
+                    
+                    result = pipeline.run(page_image, f"{file_info['filename']}_page_{page_idx}", dpi=300)
+                    
+                    # Offset bboxes by page? For now keep separate with page prefix
+                    for comp in result.manifest.components:
+                        comp.id = f"p{page_idx}_{comp.id}"
+                        # Store page info in text_associations
+                        comp.text_associations["pdf_page"] = str(page_idx)
+                    
+                    for net in result.manifest.nets:
+                        net.net_id = f"p{page_idx}_{net.net_id}"
+                    
+                    for issue in result.manifest.human_review_required:
+                        # Add page info to description
+                        issue.description = f"[Page {page_idx}] {issue.description}"
+                    
+                    merged_components.extend(result.manifest.components)
+                    merged_nets.extend(result.manifest.nets)
+                    merged_issues.extend(result.manifest.human_review_required)
+                    
+                    for k, v in result.stage_timings.items():
+                        total_timings[k] = total_timings.get(k, 0) + v
+                
+                # Create merged manifest
+                from avers.core.types import AVERSManifest, SchemaMetadata
+                first_page = all_pages[0]
+                merged_manifest = AVERSManifest(
+                    schema_metadata=SchemaMetadata(
+                        source_file=file_info["filename"],
+                        resolution_dpi=300,
+                        width=first_page.shape[1],
+                        height=first_page.shape[0],
+                        format="PDF",
+                    ),
+                    components=merged_components,
+                    nets=merged_nets,
+                    human_review_required=merged_issues,
+                )
+                
+                # Create PipelineResult
+                from avers.core.validators import PipelineResult
+                result = PipelineResult(
+                    manifest=merged_manifest,
+                    errors=[],
+                    warnings=[f"Processed {len(all_pages)} PDF pages"],
+                    stage_timings=total_timings,
+                    success=True,
+                )
+            else:
+                # Process single page (specified or first)
+                if file_id in pdf_pages_db and len(pdf_pages_db[file_id]) > page_to_process:
+                    # Load from cached page image
+                    cached_path = pdf_pages_db[file_id][page_to_process]
+                    pil_img = Image.open(cached_path)
+                    if pil_img.mode != "RGB":
+                        pil_img = pil_img.convert("RGB")
+                    image = np.array(pil_img)
+                else:
+                    pages = load_image_auto(image_path, dpi=300, page_numbers=[page_to_process])
+                    image = pages[0] if pages else np.zeros((100, 100, 3), dtype=np.uint8)
+                
+                job["current_stage"] = "detection"
+                job["progress"] = 10
+                job["updated_at"] = datetime.now()
+                
+                result = pipeline.run(image, f"{file_info['filename']}_page_{page_to_process}", dpi=300)
+        else:
+            # Regular single image
+            pages = load_image_auto(image_path, dpi=300, max_pages=1)
+            image = pages[0] if pages else np.zeros((100, 100, 3), dtype=np.uint8)
+            
+            job["current_stage"] = "detection"
+            job["progress"] = 10
+            job["updated_at"] = datetime.now()
+            
+            result = pipeline.run(image, file_info["filename"], dpi=300)
         
-        result = pipeline.run(image, file_info["filename"], dpi=300)
-        
-        # Update job with results
+        # Update job
         job["stage_timings"] = result.stage_timings
         job["errors"] = result.errors
         job["warnings"] = result.warnings
         job["progress"] = 100
         job["current_stage"] = "completed"
-        job["status"] = JobStatus.COMPLETED if result.success else JobStatus.COMPLETED
+        job["status"] = JobStatus.COMPLETED
         job["updated_at"] = datetime.now()
         
-        # Save manifest
         manifests_db[file_id] = result.manifest
-        
-        # Save to disk
         result_path = RESULTS_DIR / f"{file_id}.json"
         result.manifest.save(result_path, format="json")
         

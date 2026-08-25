@@ -20,11 +20,15 @@ class UploadResponse(BaseModel):
     height: int
     size_bytes: int
     preview_url: str
+    is_pdf: bool = False
+    num_pages: int = 1
 
 
 class ProcessRequest(BaseModel):
     config_overrides: Optional[Dict[str, Any]] = None
     stages: Optional[List[str]] = None  # which stages to run
+    pdf_page: int = 0  # for PDF: which page to process
+    pdf_process_all: bool = False  # for PDF: process all pages and merge
 
 
 class JobStatusResponse(BaseModel):

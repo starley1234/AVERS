@@ -52,6 +52,12 @@ web = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
     "python-multipart>=0.0.6",
+    "PyMuPDF>=1.23.0",
+]
+pdf = [
+    "PyMuPDF>=1.23.0",
+    "pdf2image>=1.16.0",
+    "reportlab>=4.0.0",
 ]
 ml = [
     "ultralytics>=8.0.0",

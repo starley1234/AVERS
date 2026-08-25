@@ -40,9 +40,9 @@ def create_main_parser() -> argparse.ArgumentParser:
     
     subparsers = parser.add_subparsers(dest="command", help="Команда")
     
-    # Process command (original)
-    process_parser = subparsers.add_parser("process", help="Обработать схему")
-    process_parser.add_argument("input", type=Path, help="Входное изображение (TIF, PNG, PDF)")
+    # Process command (original) - supports images and PDF
+    process_parser = subparsers.add_parser("process", help="Обработать схему (изображение или PDF)")
+    process_parser.add_argument("input", type=Path, help="Входное изображение (TIF, PNG, JPG, PDF)")
     process_parser.add_argument("-o", "--output", type=Path, help="Выходной файл")
     process_parser.add_argument("-f", "--format", choices=["json", "xml"], default="json", help="Формат вывода")
     process_parser.add_argument("-c", "--config", type=Path, help="YAML конфиг")
@@ -54,6 +54,9 @@ def create_main_parser() -> argparse.ArgumentParser:
     process_parser.add_argument("--no-vlm", action="store_true", help="Отключить VLM")
     process_parser.add_argument("--vlm-model", type=str, default="Qwen/Qwen2.5-VL-7B-Instruct", help="VLM модель")
     process_parser.add_argument("--max-vlm-calls", type=int, default=50, help="Макс VLM вызовов")
+    # PDF specific
+    process_parser.add_argument("--pdf-page", type=int, default=0, help="Страница PDF для обработки (0-indexed, default: 0)")
+    process_parser.add_argument("--pdf-all", action="store_true", help="Обработать все страницы PDF и объединить")
     
     # Web UI command
     web_parser = subparsers.add_parser("web", help="Запустить Web UI валидатор")
@@ -92,6 +95,31 @@ def create_main_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--input", "-i", type=str, required=True)
     export_parser.add_argument("--output", "-o", type=str, required=True)
     export_parser.add_argument("--format", "-f", type=str, default="coco", choices=["coco"])
+    
+    # Public datasets (NEW)
+    public_parser = dataset_sub.add_parser("public", help="Публичные датасеты для обучения")
+    public_sub = public_parser.add_subparsers(dest="public_command")
+    
+    public_list = public_sub.add_parser("list", help="Список публичных датасетов")
+    public_list.add_argument("--gost-only", action="store_true", help="Только GOST-совместимые")
+    
+    public_info = public_sub.add_parser("info", help="Инфо о датасете")
+    public_info.add_argument("--dataset", type=str, required=True, help="Имя датасета")
+    
+    public_download = public_sub.add_parser("download", help="Инструкции по скачиванию")
+    public_download.add_argument("--dataset", type=str, required=True, help="Имя датасета")
+    
+    public_convert = public_sub.add_parser("convert", help="Конвертировать в GOST")
+    public_convert.add_argument("--dataset", type=str, required=True)
+    public_convert.add_argument("--input", "-i", type=str, required=True)
+    public_convert.add_argument("--output", "-o", type=str, required=True)
+    
+    public_mix = public_sub.add_parser("mix", help="Смешанный датасет synthetic+public")
+    public_mix.add_argument("--synthetic", type=str, required=True, help="Путь к synthetic dataset.yaml")
+    public_mix.add_argument("--public", type=str, help="Список: name:path,name:path")
+    public_mix.add_argument("--output", "-o", type=str, required=True)
+    
+    public_strategy = public_sub.add_parser("strategy", help="Рекомендуемая стратегия обучения")
     
     # RAG command
     rag_parser = subparsers.add_parser("rag", help="Vision RAG инструменты")
@@ -155,8 +183,23 @@ def cmd_process(args) -> int:
     
     try:
         from avers.pipeline import load_and_process
-        logger.info(f"Processing: {input_path}")
-        result = load_and_process(input_path, output_path, config)
+        from avers.utils.pdf_loader import is_pdf
+        
+        # Detect PDF
+        is_pdf_file = is_pdf(input_path) or input_path.suffix.lower() == ".pdf"
+        
+        if is_pdf_file:
+            logger.info(f"Detected PDF: {input_path}")
+            if getattr(args, 'pdf_all', False):
+                logger.info(f"Processing all pages from PDF")
+                result = load_and_process(input_path, output_path, config, pdf_process_all=True)
+            else:
+                pdf_page = getattr(args, 'pdf_page', 0)
+                logger.info(f"Processing PDF page {pdf_page}")
+                result = load_and_process(input_path, output_path, config, pdf_page=pdf_page)
+        else:
+            logger.info(f"Processing: {input_path}")
+            result = load_and_process(input_path, output_path, config)
         
         logger.info("="*60)
         logger.info("Processing Complete")
@@ -252,6 +295,57 @@ def cmd_dataset(args) -> int:
         from avers.dataset.export import COCOExporter
         COCOExporter.from_yolo_dataset(Path(args.input), Path(args.output))
         print(f"Exported to {args.output}")
+        return 0
+    
+    elif args.dataset_command == "public":
+        from avers.dataset.public_datasets import PublicDatasetLoader, get_recommended_training_strategy
+        
+        loader = PublicDatasetLoader()
+        
+        if args.public_command == "list":
+            datasets = loader.list_datasets(gost_compatible_only=getattr(args, 'gost_only', False))
+            print(f"\nFound {len(datasets)} public datasets:\n")
+            print(f"{'Name':<30} {'Images':<8} {'Classes':<8} {'GOST':<6} {'License'}")
+            print("-"*80)
+            for ds in datasets:
+                gost_mark = "✓" if ds.gost_compatible else ""
+                print(f"{ds.name:<30} {ds.num_images:<8} {ds.num_classes:<8} {gost_mark:<6} {ds.license}")
+                print(f"  {ds.description[:70]}")
+                print(f"  URL: {ds.url}")
+                print()
+        
+        elif args.public_command == "info":
+            info = loader.get_dataset_info(args.dataset)
+            if not info:
+                print(f"Dataset {args.dataset} not found")
+                return 1
+            print(f"\nDataset: {info.name}\nDescription: {info.description}\nURL: {info.url}\nImages: {info.num_images}, Classes: {info.num_classes}\nClasses: {', '.join(info.classes)}\nLicense: {info.license}\nGOST: {info.gost_compatible}\nNotes: {info.notes}")
+            print("\n" + loader.download_instructions(args.dataset))
+        
+        elif args.public_command == "download":
+            print(loader.download_instructions(args.dataset))
+        
+        elif args.public_command == "convert":
+            out = loader.convert_to_gost(args.dataset, Path(args.input), Path(args.output))
+            print(f"Converted to {out}")
+        
+        elif args.public_command == "mix":
+            public_list = []
+            if getattr(args, 'public', None):
+                for item in args.public.split(","):
+                    if ":" in item:
+                        name, path = item.split(":", 1)
+                        public_list.append((name.strip(), Path(path.strip())))
+            yaml_path = loader.create_mixed_dataset_config(Path(args.synthetic), public_list, Path(args.output))
+            print(f"Mixed dataset: {yaml_path}")
+        
+        elif args.public_command == "strategy":
+            print(get_recommended_training_strategy())
+        
+        else:
+            print("Public command required: list, info, download, convert, mix, strategy")
+            return 1
+        
         return 0
     
     return 1

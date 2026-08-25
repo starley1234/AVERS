@@ -70,12 +70,17 @@ pip install -e ".[all]"
 
 ## 🚀 Быстрый старт
 
-### CLI - обработка схемы
+### CLI - обработка схемы (изображения + PDF)
 
 ```bash
-# Новый CLI v0.2
+# Новый CLI v0.2 - поддерживает изображения и PDF
 python -m avers process input.tif --output result.json
 python -m avers process board.png -o nets.xml --format xml --tile-size 1024
+
+# PDF поддержка (NEW)
+python -m avers process schema.pdf --output result.json  # Первая страница
+python -m avers process schema.pdf --pdf-page 2 -o result.json  # Конкретная страница
+python -m avers process schema.pdf --pdf-all -o result.json  # Все страницы, merge
 
 # Legacy (совместимость)
 python -m avers.main input.tif --output result.json
@@ -122,7 +127,7 @@ python -m avers web --port 8000 --host 0.0.0.0
 - Vision RAG поиск
 - Минималистичный дизайн (Inter + JetBrains Mono, темная тема)
 
-### Synthetic Dataset ГОСТ УГО (NEW)
+### Synthetic Dataset ГОСТ УГО + Public Datasets (NEW)
 
 ```bash
 # Генерация синтетического датасета
@@ -130,6 +135,16 @@ python -m avers dataset generate --output /tmp/avers_dataset --num-train 1000 --
 
 # Превью
 python -m avers dataset preview --output /tmp/preview --num 20
+
+# Публичные датасеты для обучения (NEW - 8 датасетов найдено)
+python -m avers dataset public list
+python -m avers dataset public list --gost-only  # Только GOST-совместимые
+python -m avers dataset public info --dataset masala-chai
+python -m avers dataset public download --dataset masala-chai
+python -m avers dataset public strategy  # Рекомендуемая стратегия обучения
+
+# Смешанный датасет: синтетика + публичные
+python -m avers dataset public mix --synthetic /tmp/gost/dataset.yaml --public masala-chai:/tmp/masala-chai,circuit-diagram-roboflow:/tmp/roboflow --output /tmp/mixed
 
 # Или через Python
 from avers.dataset.synthetic import GOSTGenerator, SyntheticConfig
@@ -142,6 +157,11 @@ img, annotations = gen.generate_realistic_schematic()
 from avers.dataset.generator import SchematicComposer
 composer = SchematicComposer()
 large_img, anns = composer.compose_a2x6(width=14000, height=3500)
+
+# Public datasets
+from avers.dataset.public_datasets import PublicDatasetLoader
+loader = PublicDatasetLoader()
+datasets = loader.list_datasets(gost_compatible_only=True)  # Masala-CHAI 4300, ElectroNet 3500
 ```
 
 **10 классов ГОСТ:**

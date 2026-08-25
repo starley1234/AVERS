@@ -561,9 +561,17 @@ body {
       <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
         <div class="upload-icon">📄</div>
         <div class="upload-text">Загрузите схему</div>
-        <div class="upload-hint">TIF, PNG, JPG до 50MB<br>А2х6 до 15000×4000px</div>
+        <div class="upload-hint">TIF, PNG, JPG, <b>PDF</b> до 50MB<br>А2х6 до 15000×4000px, PDF многостраничный</div>
       </div>
-      <input type="file" id="fileInput" hidden accept=".tif,.tiff,.png,.jpg,.jpeg,.pdf" onchange="handleFile(event)">
+      <input type="file" id="fileInput" hidden accept=".tif,.tiff,.png,.jpg,.jpeg,.pdf,.PDF" onchange="handleFile(event)">
+
+      <div class="section" id="pdfPagesSection" style="display:none">
+        <div class="section-label">Страницы PDF: <span id="pdfPageCount">0</span></div>
+        <div class="list" id="pdfPagesList" style="max-height:200px; overflow:auto"></div>
+        <div style="display:flex; gap:6px; margin-top:6px">
+          <label class="layer"><input type="checkbox" id="pdfProcessAll"> Обработать все страницы (merge)</label>
+        </div>
+      </div>
 
       <div class="section" id="fileInfo" style="display:none">
         <div class="section-label">Файл</div>
@@ -857,7 +865,10 @@ let state = {
   visMode: 'graph',
   layers: {detections:true, text:true, wires:true, pins:true, issues:true},
   annotateMode: false,
-  annotations: []
+  annotations: [],
+  isPDF: false,
+  pdfPages: [],
+  currentPDFPage: 0,
 };
 
 const API = '';
@@ -888,25 +899,69 @@ async function uploadFile(file) {
   document.getElementById('fileSize').textContent = (file.size/1024/1024).toFixed(2)+' MB';
   document.getElementById('statusText').textContent = 'Загрузка...';
   
+  const isPDF = file.name.toLowerCase().endsWith('.pdf');
+  
   try {
     const res = await fetch(`${API}/api/upload`, {method:'POST', body:fd});
     const data = await res.json();
     state.fileId = data.file_id;
+    state.isPDF = isPDF;
     
-    document.getElementById('fileDims').textContent = `${data.width}×${data.height} px`;
+    document.getElementById('fileDims').textContent = `${data.width}×${data.height} px ${isPDF ? '(PDF)' : ''}`;
     document.getElementById('fileProgress').style.width = '100%';
-    document.getElementById('statusText').textContent = `Файл загружен: ${data.filename}`;
+    document.getElementById('statusText').textContent = `Файл загружен: ${data.filename} ${isPDF ? '[PDF]' : ''}`;
     document.getElementById('runBtn').disabled = false;
     document.getElementById('canvasEmpty').style.display = 'none';
     
     const img = document.getElementById('canvasImg');
-    img.src = `${API}/api/image/${state.fileId}`;
+    img.src = `${API}/api/image/${state.fileId}?page=0`;
     img.style.display = 'block';
     img.onload = () => { fitView(); renderOverlay(); };
+    
+    // If PDF, load pages info
+    if (isPDF) {
+      try {
+        const pdfRes = await fetch(`${API}/api/pdf/${state.fileId}/info`);
+        const pdfInfo = await pdfRes.json();
+        state.pdfPages = pdfInfo.pages || [];
+        state.currentPDFPage = 0;
+        
+        document.getElementById('pdfPagesSection').style.display = 'block';
+        document.getElementById('pdfPageCount').textContent = pdfInfo.num_pages;
+        
+        const pagesList = document.getElementById('pdfPagesList');
+        pagesList.innerHTML = pdfInfo.pages.map((p, idx) => `
+          <div class="list-item ${idx===0?'selected':''}" onclick="switchPDFPage(${idx})" data-page="${idx}">
+            <div class="item-top"><span class="item-title">Страница ${idx+1}</span><span class="item-badge">PDF</span></div>
+            <div class="item-meta">Клик для просмотра · Обработка отдельно или все вместе</div>
+          </div>
+        `).join('');
+        
+        document.getElementById('statusText').textContent = `PDF загружен: ${pdfInfo.num_pages} страниц`;
+      } catch(e) {
+        console.warn('PDF info failed', e);
+      }
+    } else {
+      document.getElementById('pdfPagesSection').style.display = 'none';
+    }
     
   } catch(err) {
     document.getElementById('statusText').textContent = 'Ошибка загрузки: '+err;
   }
+}
+
+function switchPDFPage(pageIdx) {
+  if (!state.fileId) return;
+  state.currentPDFPage = pageIdx;
+  
+  document.querySelectorAll('#pdfPagesList .list-item').forEach(el=>el.classList.remove('selected'));
+  document.querySelector(`#pdfPagesList .list-item[data-page="${pageIdx}"]`)?.classList.add('selected');
+  
+  const img = document.getElementById('canvasImg');
+  img.src = `${API}/api/image/${state.fileId}?page=${pageIdx}`;
+  img.onload = () => { fitView(); renderOverlay(); };
+  
+  document.getElementById('statusText').textContent = `PDF страница ${pageIdx+1}/${state.pdfPages.length}`;
 }
 
 async function runPipeline() {
@@ -915,8 +970,16 @@ async function runPipeline() {
   const cfg = {
     slicing: { tile_size: parseInt(document.getElementById('cfgTile').value), overlap_ratio: parseFloat(document.getElementById('cfgOverlap').value) },
     detection: { confidence_threshold: parseFloat(document.getElementById('cfgConf').value) },
-    graph_synthesis: { snap_radius: parseInt(document.getElementById('cfgSnap').value) }
+    graph_synthesis: { snap_radius: parseInt(document.getElementById('cfgSnap').value) },
+    pdf_page: state.currentPDFPage || 0,
+    pdf_process_all: document.getElementById('pdfProcessAll')?.checked || false,
   };
+  
+  if (state.isPDF && cfg.pdf_process_all) {
+    if (!confirm(`Обработать все ${state.pdfPages.length} страниц PDF и объединить результаты? Это может занять время.`)) {
+      return;
+    }
+  }
   
   document.getElementById('runBtn').disabled = true;
   document.getElementById('runBtn').textContent = '⏳ Обработка...';

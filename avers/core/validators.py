@@ -986,40 +986,176 @@ def load_and_process(
     image_path: Union[str, Path],
     output_path: Optional[Union[str, Path]] = None,
     config: Optional[AVERSConfig] = None,
+    pdf_page: int = 0,
+    pdf_process_all: bool = False,
 ) -> PipelineResult:
     """
-    Load image and process with production pipeline.
+    Load image/PDF and process with production pipeline.
+    
+    Supports:
+      - Images: PNG, JPG, TIF, etc.
+      - PDFs: single page (pdf_page) or all pages (pdf_process_all)
     
     Args:
-        image_path: Path to image file
+        image_path: Path to image or PDF file
         output_path: Path for output (optional)
         config: Pipeline config
+        pdf_page: Page number for PDF (0-indexed)
+        pdf_process_all: Process all PDF pages and merge
         
     Returns:
         PipelineResult
     """
+    from avers.utils.image_helpers import load_image_auto, get_image_info, is_pdf
     from PIL import Image
     
     path = Path(image_path)
     
-    # Load image
-    pil_img = Image.open(path)
-    if pil_img.mode != "RGB":
-        pil_img = pil_img.convert("RGB")
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
     
-    image = np.array(pil_img)
-    dpi = pil_img.info.get("dpi", (300, 300))
-    if isinstance(dpi, tuple):
-        dpi = int(dpi[0])
-    else:
-        dpi = int(dpi)
+    # Get info
+    info = get_image_info(path)
+    is_pdf_file = info.get("is_pdf", False) or is_pdf(path)
     
-    # Process
     pipeline = ProductionPipeline(config)
-    result = pipeline.run(image, path.name, dpi)
+    
+    if is_pdf_file and pdf_process_all:
+        # Process all PDF pages and merge
+        pages = load_image_auto(path, dpi=300)
+        logger.info(f"Processing {len(pages)} pages from PDF {path}")
+        
+        merged_components = []
+        merged_nets = []
+        merged_issues = []
+        total_timings = {}
+        errors = []
+        warnings = [f"PDF with {len(pages)} pages"]
+        
+        for page_idx, page_image in enumerate(pages):
+            result = pipeline.run(page_image, f"{path.name}_page_{page_idx}", dpi=300)
+            
+            # Prefix IDs with page number
+            for comp in result.manifest.components:
+                comp.id = f"p{page_idx}_{comp.id}"
+                comp.text_associations["pdf_page"] = str(page_idx)
+            for net in result.manifest.nets:
+                net.net_id = f"p{page_idx}_{net.net_id}"
+            for issue in result.manifest.human_review_required:
+                issue.description = f"[Page {page_idx}] {issue.description}"
+            
+            merged_components.extend(result.manifest.components)
+            merged_nets.extend(result.manifest.nets)
+            merged_issues.extend(result.manifest.human_review_required)
+            
+            for k, v in result.stage_timings.items():
+                total_timings[k] = total_timings.get(k, 0) + v
+            
+            errors.extend(result.errors)
+            warnings.extend(result.warnings)
+        
+        # Create merged manifest
+        first_page = pages[0] if pages else np.zeros((100, 100, 3), dtype=np.uint8)
+        merged_manifest = AVERSManifest(
+            schema_metadata=SchemaMetadata(
+                source_file=path.name,
+                resolution_dpi=300,
+                width=first_page.shape[1],
+                height=first_page.shape[0],
+                format="PDF",
+            ),
+            components=merged_components,
+            nets=merged_nets,
+            human_review_required=merged_issues,
+        )
+        
+        result = PipelineResult(
+            manifest=merged_manifest,
+            errors=errors,
+            warnings=warnings,
+            stage_timings=total_timings,
+            success=len(errors) == 0,
+        )
+    
+    elif is_pdf_file:
+        # Single PDF page
+        pages = load_image_auto(path, dpi=300, page_numbers=[pdf_page])
+        if not pages:
+            raise ValueError(f"Failed to load page {pdf_page} from {path}")
+        image = pages[0]
+        
+        # Try to get DPI from PDF info if available
+        dpi = 300
+        try:
+            from avers.utils.pdf_loader import PDFLoader
+            loader = PDFLoader()
+            # PDF DPI is not stored, use 300 as default
+        except Exception:
+            pass
+        
+        result = pipeline.run(image, f"{path.name}_page_{pdf_page}", dpi=dpi)
+    
+    else:
+        # Regular image
+        pil_img = Image.open(path)
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        image = np.array(pil_img)
+        dpi = pil_img.info.get("dpi", (300, 300))
+        if isinstance(dpi, tuple):
+            dpi = int(dpi[0])
+        else:
+            try:
+                dpi = int(dpi)
+            except Exception:
+                dpi = 300
+        
+        result = pipeline.run(image, path.name, dpi)
     
     # Save output
     if output_path:
         result.manifest.save(output_path, format="xml" if str(output_path).endswith(".xml") else "json")
     
     return result
+
+
+def load_and_process_pdf(
+    pdf_path: Union[str, Path],
+    output_path: Optional[Union[str, Path]] = None,
+    config: Optional[AVERSConfig] = None,
+    page_numbers: Optional[List[int]] = None,
+    process_all: bool = False,
+) -> Union[PipelineResult, List[PipelineResult]]:
+    """
+    Load PDF and process pages.
+    
+    Args:
+        pdf_path: Path to PDF
+        output_path: Output path (for merged result if process_all)
+        config: Pipeline config
+        page_numbers: Specific pages to process
+        process_all: Merge all pages into single manifest
+    
+    Returns:
+        Single PipelineResult (if process_all) or List[PipelineResult] (per page)
+    """
+    from avers.utils.image_helpers import load_image_auto
+    
+    pdf_path = Path(pdf_path)
+    pages = load_image_auto(pdf_path, dpi=300, page_numbers=page_numbers)
+    
+    pipeline = ProductionPipeline(config)
+    
+    if process_all:
+        return load_and_process(pdf_path, output_path, config, pdf_process_all=True)
+    else:
+        results = []
+        for i, page_img in enumerate(pages):
+            result = pipeline.run(page_img, f"{pdf_path.name}_page_{i}", dpi=300)
+            if output_path:
+                # Save per-page
+                out_path = Path(output_path)
+                page_out = out_path.parent / f"{out_path.stem}_page_{i}{out_path.suffix}"
+                result.manifest.save(page_out)
+            results.append(result)
+        return results

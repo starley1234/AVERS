@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-CLI для работы с датасетом ГОСТ УГО.
+CLI для работы с датасетом ГОСТ УГО + публичные датасеты.
 
 Использование:
   python -m avers.dataset.cli generate --num 1000 --output /tmp/avers_dataset
   python -m avers.dataset.cli train --data /tmp/avers_dataset/dataset.yaml --model rtdetr-l
-  python -m avers.dataset.cli export --format coco --input /tmp/avers_dataset --output /tmp/coco.json
+  python -m avers.dataset.cli public list
+  python -m avers.dataset.cli public download --dataset masala-chai
+  python -m avers.dataset.cli public mix --synthetic /tmp/gost/dataset.yaml --output /tmp/mixed
 """
 
 import argparse
@@ -118,10 +120,83 @@ def cmd_preview(args):
     logger.info(f"Preview images saved to {output_dir}")
 
 
+def cmd_public(args):
+    """Public datasets commands."""
+    from avers.dataset.public_datasets import PublicDatasetLoader, get_recommended_training_strategy, PUBLIC_DATASETS
+    
+    loader = PublicDatasetLoader()
+    
+    if args.public_command == "list":
+        datasets = loader.list_datasets(gost_compatible_only=args.gost_only)
+        print(f"\nFound {len(datasets)} public datasets:\n")
+        print(f"{'Name':<30} {'Images':<8} {'Classes':<8} {'GOST':<6} {'License'}")
+        print("-"*80)
+        for ds in datasets:
+            gost_mark = "✓" if ds.gost_compatible else ""
+            print(f"{ds.name:<30} {ds.num_images:<8} {ds.num_classes:<8} {gost_mark:<6} {ds.license}")
+            print(f"  {ds.description}")
+            print(f"  URL: {ds.url}")
+            print()
+        
+        if not args.gost_only:
+            print("\nGOST-compatible only:")
+            print("  python -m avers.dataset.cli public list --gost-only")
+    
+    elif args.public_command == "info":
+        info = loader.get_dataset_info(args.dataset)
+        if not info:
+            print(f"Dataset {args.dataset} not found")
+            print(f"Available: {', '.join(PUBLIC_DATASETS.keys())}")
+            return 1
+        
+        print(f"\nDataset: {info.name}")
+        print(f"Description: {info.description}")
+        print(f"URL: {info.url}")
+        print(f"Images: {info.num_images}, Classes: {info.num_classes}")
+        print(f"Classes: {', '.join(info.classes)}")
+        print(f"License: {info.license}, Format: {info.format}")
+        print(f"GOST compatible: {info.gost_compatible}")
+        if info.paper_url:
+            print(f"Paper: {info.paper_url}")
+        print(f"\nNotes: {info.notes}")
+        print("\n" + loader.download_instructions(args.dataset))
+    
+    elif args.public_command == "download":
+        print(loader.download_instructions(args.dataset))
+        print(f"\nAfter download, convert to GOST:")
+        print(f"  python -m avers.dataset.cli public convert --dataset {args.dataset} --input /path/to/dataset --output /tmp/gost_converted")
+    
+    elif args.public_command == "convert":
+        output = loader.convert_to_gost(args.dataset, Path(args.input), Path(args.output))
+        print(f"Converted mapping saved to {output}")
+        print(f"  Mapping: {Path(args.output) / 'public_to_gost_mapping.json'}")
+    
+    elif args.public_command == "mix":
+        # Parse public datasets list: name:path,name:path
+        public_list = []
+        if args.public:
+            for item in args.public.split(","):
+                if ":" in item:
+                    name, path = item.split(":", 1)
+                    public_list.append((name.strip(), Path(path.strip())))
+        
+        yaml_path = loader.create_mixed_dataset_config(
+            synthetic_dataset_yaml=Path(args.synthetic),
+            public_datasets=public_list,
+            output_path=Path(args.output)
+        )
+        print(f"Mixed dataset created: {yaml_path}")
+    
+    elif args.public_command == "strategy":
+        print(get_recommended_training_strategy())
+    
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="avers-dataset",
-        description="AVERS ГОСТ УГО Dataset Tools"
+        description="AVERS ГОСТ УГО Dataset Tools + Public Datasets"
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Command")
@@ -157,10 +232,38 @@ def main():
     preview_parser.add_argument("--num", type=int, default=10, help="Number of images")
     preview_parser.add_argument("--size", type=int, default=1024, help="Image size")
     
+    # Public datasets
+    public_parser = subparsers.add_parser("public", help="Public datasets for training")
+    public_sub = public_parser.add_subparsers(dest="public_command", help="Public dataset command")
+    
+    public_list = public_sub.add_parser("list", help="List public datasets")
+    public_list.add_argument("--gost-only", action="store_true", help="Only GOST-compatible")
+    
+    public_info = public_sub.add_parser("info", help="Info about dataset")
+    public_info.add_argument("--dataset", type=str, required=True, help="Dataset name")
+    
+    public_download = public_sub.add_parser("download", help="Download instructions")
+    public_download.add_argument("--dataset", type=str, required=True, help="Dataset name")
+    
+    public_convert = public_sub.add_parser("convert", help="Convert public dataset to GOST")
+    public_convert.add_argument("--dataset", type=str, required=True, help="Dataset name")
+    public_convert.add_argument("--input", "-i", type=str, required=True, help="Input dataset path")
+    public_convert.add_argument("--output", "-o", type=str, required=True, help="Output path")
+    
+    public_mix = public_sub.add_parser("mix", help="Create mixed dataset (synthetic + public)")
+    public_mix.add_argument("--synthetic", type=str, required=True, help="Path to synthetic dataset.yaml")
+    public_mix.add_argument("--public", type=str, help="Public datasets list: name:path,name:path")
+    public_mix.add_argument("--output", "-o", type=str, required=True, help="Output dir for mixed")
+    
+    public_strategy = public_sub.add_parser("strategy", help="Show recommended training strategy")
+    
     args = parser.parse_args()
     
     if not args.command:
         parser.print_help()
+        print("\nPublic datasets:")
+        print("  python -m avers.dataset.cli public list")
+        print("  python -m avers.dataset.cli public strategy")
         return 1
     
     try:
@@ -172,6 +275,8 @@ def main():
             return cmd_export(args)
         elif args.command == "preview":
             cmd_preview(args)
+        elif args.command == "public":
+            return cmd_public(args)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
         return 130
