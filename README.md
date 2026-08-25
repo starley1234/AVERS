@@ -1,6 +1,6 @@
 # АВЕРС — Автоматическая Векторизация и Распознавание Схем
 
-**AVERS** (Automated Vectorization and Recognition of Schematics) — система автоматической векторизации и семантической оцифровки схем бортовых кабельных сетей (БКС).
+**AVERS** (Automated Vectorization and Recognition of Schematics) — production-ready система автоматической векторизации и семантической оцифровки схем бортовых кабельных сетей (БКС).
 
 ## 🎯 Назначение
 
@@ -8,171 +8,133 @@
 
 ### Ключевые возможности
 
-- ✅ **Многостадийный гибридный пайплайн**: Детекция УГО + OCR + Computer Vision + Графовый синтез
-- ✅ **Обработка больших форматов**: А2х6 (до 15000×4000 px) при 300+ DPI
-- ✅ **SAHI-нарезка**: Сохранение детализации при параллельной обработке
-- ✅ **Точечный VLM-арбитраж**: Разрешение коллизий только для неопределённых участков
-- ✅ **Экспорт в САПР**: JSON/XML формат, совместимый с российскими САПР
+- ✅ **Production-ready pipeline** — stateless API, error handling, validation
+- ✅ **SAHI интеграция** — нарезка на тайлы 1024×1024 с перекрытием
+- ✅ **ML-ready** — RT-DETR/YOLO, PaddleOCR, Qwen-VL с fallback
+- ✅ **Обработка больших форматов** — А2х6 (до 15000×4000 px)
+- ✅ **Graph synthesis** — NetworkX, wire snapping, net extraction
+- ✅ **Экспорт в САПР** — JSON/XML формат
 
 ## 🏗️ Архитектура
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Исходный скан (А2х6, TIF/PNG/PDF)                          │
-│  Разрешение: 300+ DPI, ~14000x3500 px                        │
 └────────────────────────┬────────────────────────────────────┘
                          │
-     ┌───────────────────┼───────────────────┐
-     │                   │                   │
-┌────▼────┐      ┌──────▼──────┐     ┌──────▼──────┐
-│  УГО    │      │    OCR      │     │   Линии     │
-│ SAHI +  │      │  PaddleOCR  │     │  OpenCV     │
-│ RT-DETR │      │  DBNet+CRNN │     │ Скелетиз.   │
-└────┬────┘      └──────┬──────┘     └──────┬──────┘
-     │                   │                   │
-     └───────────────────┼───────────────────┘
-                         │
               ┌──────────▼──────────┐
-              │  Графовый синтез     │
-              │  NetworkX + k-d tree │
-              │  Snapping + Nets     │
+              │  SAHI SlicedDetector │
+              │  (RT-DETR / YOLO)   │
               └──────────┬──────────┘
                          │
               ┌──────────▼──────────┐
-              │  VLM Арбитраж       │
-              │  (точечные ROI)     │
+              │    SchematicOCR      │
+              │  (PaddleOCR/EasyOCR) │
               └──────────┬──────────┘
                          │
               ┌──────────▼──────────┐
-              │  NETLIST JSON/XML   │
-              │  Экспорт в САПР     │
+              │   WireVectorizer     │
+              │   (OpenCV + RDP)     │
+              └──────────┬──────────┘
+                         │
+              ┌──────────▼──────────┐
+              │  ProductionPipeline  │
+              │  GraphBuilder + k-d  │
+              └──────────┬──────────┘
+                         │
+              ┌──────────▼──────────┐
+              │  VLMWrapper          │
+              │  (Qwen/Gemma-VL)     │
+              └──────────┬──────────┘
+                         │
+              ┌──────────▼──────────┐
+              │  NETLIST JSON/XML    │
               └─────────────────────┘
 ```
 
 ## 📦 Установка
 
 ```bash
-# Клонирование репозитория
 git clone https://github.com/starley1234/AVERS.git
 cd AVERS
 
-# Виртуальное окружение
 python -m venv venv && source venv/bin/activate
-
-# Установка зависимостей
 pip install -r requirements.txt
 ```
 
 ## 🚀 Быстрый старт
 
+```python
+from avers.pipeline import load_and_process
+
+# Load and process image
+result = load_and_process("input.tif", "output.json")
+
+print(f"Components: {len(result.manifest.components)}")
+print(f"Nets: {len(result.manifest.nets)}")
+print(f"Errors: {result.errors}")
+print(f"Timings: {result.stage_timings}")
+```
+
 ```bash
-# Обработка схемы
+# CLI
 python -m avers.main input.tif --output result.json
 
-# С XML экспортом
-python -m avers.main board.png -o nets.xml --format xml
-
-# С визуализацией
-python -m avers.main schematic.tif --visualize
-
-# Демо без реальных данных
-python demo.py
+# Demo
+python demo_production.py
 ```
 
-## 📁 Использование в Python
+## 📁 API
+
+### Production Pipeline
 
 ```python
-from avers import process_schematic, aversPipeline
-from avers.config import AVERSConfig
+from avers.pipeline import ProductionPipeline, PipelineResult
+from PIL import Image
+import numpy as np
 
-# Быстрый запуск
-manifest = process_schematic("input.tif", "output.json")
+# Method 1: Load and process
+result = load_and_process("image.tif", "output.json")
 
-# Или через pipeline с контролем
-pipeline = aversPipeline()
-manifest = pipeline.process("input.tif", "output.json")
+# Method 2: Direct pipeline
+pipeline = ProductionPipeline()
+image = np.array(Image.open("image.tif"))
+result = pipeline.run(image, "image.tif", dpi=300)
 
-# Доступ к данным
-for component in manifest.components:
-    print(f"{component.designator}: {component.type}")
-
-for net in manifest.nets:
-    print(f"{net.net_id}: {len(net.connections)} connections")
-
-# Сохранение вручную
-manifest.save("output.xml", format="xml")
+# PipelineResult
+result.manifest      # AVERSManifest with results
+result.errors        # List of errors
+result.warnings      # List of warnings
+result.stage_timings  # Dict of stage -> time
+result.success       # True if no errors
 ```
 
-## 🔧 Стадии обработки
+### Legacy Pipeline (backwards compatible)
 
-| Стадия | Модуль | Описание | Статус |
-|--------|--------|----------|--------|
-| 1 | SAHI Slicing | Нарезка на тайлы 1024×1024 с перекрытием | ✅ |
-| 2 | УГО Detection | RT-DETR / YOLO детекция компонентов | ✅ |
-| 3 | OCR | PaddleOCR распознавание текста | ✅ |
-| 4 | Vectorization | OpenCV скелетизация и векторизация линий | ✅ |
-| 5 | Graph Synthesis | NetworkX сборка графа, выделение цепей | ✅ |
-| 6 | VLM Arbitration | Разрешение коллизий через Gemma/Qwen-VL | ✅ |
+```python
+from avers import process_schematic
 
-### Детали реализации
+manifest = process_schematic("input.tif", "output.json", production=False)
+```
 
-#### Stage 1: SAHI Slicing
-- Нарезка изображений на перекрывающиеся тайлы
-- Проекция координат детекций обратно в глобальное пространство
-- NMS-дедупликация
-
-#### Stage 2: УГО Detection
-- YOLODetector с поддержкой RT-DETR/YOLO
-- SlicingDetector для параллельного инференса
-- Группировка детекций в семантические компоненты
-- Mock-режим для тестирования
-
-#### Stage 3: OCR
-- PaddleOCR с fallback на EasyOCR
-- Классификация текста (коннекторы, пины, типы проводов, напряжения)
-- Regex-валидация по ГОСТ
-- TextAssociationEngine с k-d tree
-
-#### Stage 4: Wire Vectorization
-- OpenCV скелетизация (Zhang-Suen)
-- Hough Transform + contour tracing
-- Ramer-Douglas-Peucker упрощение
-- Детекция T/X junction points
-
-#### Stage 5: Graph Synthesis
-- NetworkX MultiGraph
-- Wire-to-pin snapping (k-d tree, R=15px)
-- Объединение коллинеарных сегментов
-- Net extraction из connected components
-
-#### Stage 6: VLM Arbitration
-- VLMWrapper для Qwen2.5-VL / Gemma-4-VIT
-- ROI extraction (256×256)
-- Mock-режим без GPU
-
-## ⚙️ Конфигурация
+## 🔧 Конфигурация
 
 ```yaml
 # config.yaml
-project_name: AVERS
-
 slicing:
   tile_size: 1024
   overlap_ratio: 0.2
 
 detection:
-  model_type: yolo
+  model_type: yolo      # 'yolo' or 'rtdetr'
   confidence_threshold: 0.25
-  device: cuda
+  device: cuda          # 'cuda', 'cpu', 'mps'
 
 ocr:
-  enabled: true
   lang: ru
   text_confidence_threshold: 0.65
 
 vectorization:
-  enabled: true
-  skeletonize_method: zhang_suen
   rdp_epsilon: 2.0
 
 graph_synthesis:
@@ -182,15 +144,14 @@ graph_synthesis:
 vlm_arbitrator:
   enabled: true
   model_name: Qwen/Qwen2.5-VL-7B-Instruct
-  roi_size: 256
 ```
 
-## 📊 Формат выходных данных
+## 📊 Выходной формат
 
 ```json
 {
   "schema_metadata": {
-    "source_file": "schema_board_A2x6.tif",
+    "source_file": "schema.tif",
     "resolution_dpi": 300,
     "width": 14200,
     "height": 3800
@@ -200,23 +161,19 @@ vlm_arbitrator:
       "id": "comp_001",
       "designator": "X1",
       "type": "connector",
-      "part_number": "СНЦ144-6/10РО11",
       "bbox": [1240, 500, 1480, 890],
       "pins": [
-        {"pin_number": "1", "coord": [1480, 520], "confidence": 1.0},
-        {"pin_number": "2", "coord": [1480, 560], "confidence": 1.0}
+        {"pin_number": "1", "coord": [1480, 520]}
       ]
     }
   ],
   "nets": [
     {
       "net_id": "NET_PWR_27V",
-      "wire_type": "БПВЛ-0.35",
       "connections": [
-        {"component_id": "comp_001", "pin": "1"},
-        {"component_id": "comp_002", "pin": "1"}
+        {"component_id": "comp_001", "pin": "1"}
       ],
-      "path_points": [[1480, 520], [3200, 520], [8500, 520]],
+      "path_points": [[1480, 520], [3200, 520]],
       "confidence": 0.98
     }
   ],
@@ -227,43 +184,44 @@ vlm_arbitrator:
 ## 🧪 Тестирование
 
 ```bash
-# Все тесты
+# All tests (57 passing)
 python -m pytest tests/ -v
 
-# Только core тесты
-python -m pytest tests/test_core.py -v
+# Production tests only
+python -m pytest tests/test_production.py -v
 
-# Только stage тесты
-python -m pytest tests/test_full_pipeline.py -v
-
-# С покрытием
+# With coverage
 python -m pytest tests/ --cov=avers --cov-report=html
 ```
+
+## 🏭 Production Features
+
+| Feature | Description |
+|---------|-------------|
+| **Stateless API** | No side effects, run multiple images in parallel |
+| **Error Handling** | Each stage wrapped, pipeline continues on failure |
+| **Validation** | Config validation at init, manifest validation |
+| **Stage Timings** | Per-stage performance tracking |
+| **Fallback** | SAHI → Mock, PaddleOCR → EasyOCR → Mock |
+| **Type Safety** | Pydantic models, full type hints |
 
 ## 📋 Требования
 
 - Python 3.11+
-- CUDA-совместимая видеокарта (для нейросетей)
-- 16+ GB RAM для обработки больших схем
+- 8+ GB RAM
+- CUDA GPU (optional, for ML models)
 
 ## 📦 Dependencies
 
-```
-numpy>=1.24.0
-scipy>=1.11.0
-networkx>=3.2.0
-pydantic>=2.5.0
-opencv-python>=4.8.0
-scikit-image>=0.22.0
-Pillow>=10.0.0
-lxml>=4.9.0
-```
+```txt
+# Core
+numpy scipy networkx pydantic opencv-python scikit-image Pillow lxml
 
-### Optional (для ML)
-```
-ultralytics>=8.0.0  # YOLO/RT-DETR
-paddleocr>=2.7.0    # OCR
-transformers>=4.35.0  # VLM
+# Optional ML (install separately)
+ultralytics      # YOLO/RT-DETR
+sahi             # SAHI
+paddleocr        # OCR
+transformers     # VLM
 ```
 
 ## 📄 Лицензия
