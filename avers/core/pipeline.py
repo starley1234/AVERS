@@ -1,21 +1,22 @@
 """
 AVERS Main Pipeline Orchestrator
 
-Coordinates all stages of the schematic processing pipeline:
-1. Image preprocessing and SAHI slicing
+Coordinates all 6 stages of the schematic processing pipeline:
+1. SAHI image slicing
 2. УГО detection (RT-DETR/YOLO)
-3. OCR text recognition
+3. OCR text recognition (PaddleOCR)
 4. Wire vectorization (OpenCV)
 5. Graph synthesis (NetworkX)
-6. VLM arbitration for conflicts
+6. VLM arbitration (Gemma/Qwen-VL)
 """
 
 import time
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Tuple
 from dataclasses import dataclass, field
 
 import numpy as np
+import cv2
 
 from avers.core.logger import get_logger, setup_logger
 from avers.core.types import (
@@ -28,8 +29,34 @@ from avers.core.types import (
     IssueType,
 )
 from avers.config import AVERSConfig, DEFAULT_CONFIG
-from avers.stages.stage1_slicing import SlicingEngine, Tile, DetectionBox, load_image
-from avers.stages.stage5_graph_synthesis import GraphBuilder, WireSegment, PinReference
+from avers.stages.stage1_slicing import SlicingEngine, Tile, load_image
+from avers.stages.stage2_detection import (
+    detect_components,
+    DetectionConfig,
+    group_detections_into_components,
+)
+from avers.stages.stage3_ocr import (
+    recognize_schematic_text,
+    OCRConfig,
+    TextLabel,
+    TextAssociationEngine,
+)
+from avers.stages.stage4_vectorization import (
+    vectorize_wires,
+    VectorizationConfig,
+)
+from avers.stages.stage5_graph_synthesis import (
+    GraphBuilder,
+    WireSegment,
+    PinReference,
+)
+from avers.stages.stage6_vlm_arbitrator import (
+    VLMWrapper,
+    VLMConfig,
+    ArbitrationEngine,
+    JunctionIssue,
+    create_issues_from_detections,
+)
 
 
 @dataclass
@@ -46,12 +73,12 @@ class StageResult:
 class aversPipeline:
     """
     Main pipeline for automated schematic vectorization.
-
-    Orchestrates the multi-stage processing pipeline with:
+    
+    Orchestrates all 6 stages with:
     - Progress tracking
     - Error handling and recovery
     - Intermediate result caching
-    - Parallel processing support (via sahi)
+    - Parallel processing support
     """
 
     def __init__(
@@ -61,17 +88,18 @@ class aversPipeline:
     ):
         """
         Initialize AVERS pipeline.
-
+        
         Args:
-            config: Pipeline configuration (uses default if not provided)
+            config: Pipeline configuration
             log_level: Logging level
         """
         self.config = config or DEFAULT_CONFIG
         self.logger = setup_logger("avers", level=log_level)
 
-        # Stage engines (lazy-loaded)
+        # Stage engines
         self._slicing_engine: Optional[SlicingEngine] = None
         self._graph_builder: Optional[GraphBuilder] = None
+        self._text_association: Optional[TextAssociationEngine] = None
 
         # Processing state
         self.current_image: Optional[np.ndarray] = None
@@ -80,6 +108,9 @@ class aversPipeline:
 
         # Processed data
         self.detected_components: List[Component] = []
+        self.text_labels: List[TextLabel] = []
+        self.wire_segments: List[WireSegment] = []
+        self.junction_points: set = set()
         self.detected_nets: List[Net] = []
         self.human_review_issues: List[HumanReviewIssue] = []
 
@@ -103,41 +134,23 @@ class aversPipeline:
         visualize: bool = False,
         output_path: Optional[Path] = None,
     ) -> StageResult:
-        """
-        Stage 1: Slice large image into overlapping tiles.
-
-        Args:
-            image: Input image
-            visualize: Create tile visualization
-            output_path: Path to save visualization
-
-        Returns:
-            StageResult with tiles
-        """
+        """Stage 1: Slice large image into overlapping tiles."""
         start_time = time.time()
         self.logger.info("Stage 1: Image slicing (SAHI)")
 
         try:
-            # Generate tiles
             tiles = list(self.slicing_engine.generate_tiles(image))
             self.current_tiles = tiles
+            self.logger.info(f"Generated {len(tiles)} tiles from {image.shape[1]}x{image.shape[0]} image")
 
-            self.logger.info(f"Generated {len(tiles)} tiles from image")
-
-            # Optional visualization
             if visualize:
-                self.slicing_engine.visualize_tiles(
-                    image, tiles, output_path
-                )
-                self.logger.debug(f"Tile visualization saved to {output_path}")
-
-            processing_time = time.time() - start_time
+                self.slicing_engine.visualize_tiles(image, tiles, output_path)
 
             return StageResult(
                 stage_name="stage1_slicing",
                 success=True,
                 data={"tiles": tiles, "tile_count": len(tiles)},
-                processing_time=processing_time,
+                processing_time=time.time() - start_time,
             )
 
         except Exception as e:
@@ -153,39 +166,49 @@ class aversPipeline:
 
     def stage2_detect_ugo(
         self,
-        image: Optional[np.ndarray] = None,
-        model_path: Optional[str] = None,
+        image: np.ndarray,
     ) -> StageResult:
-        """
-        Stage 2: Detect УГО ( условные графические обозначения).
-
-        Args:
-            image: Full image (if not using tiles)
-            model_path: Path to detection model weights
-
-        Returns:
-            StageResult with detected components
-        """
+        """Stage 2: Detect УГО ( условные графические обозначения)."""
         start_time = time.time()
-        self.logger.info("Stage 2: УГО Detection (RT-DETR/YOLO)")
+        self.logger.info("Stage 2: УГО Detection")
 
         try:
-            # Placeholder for actual detection implementation
-            # Would integrate with:
-            # - sahi for tiled inference
-            # - ultralytics for YOLO/RT-DETR
-            # - Project coordinates back to global space
+            detection_config = DetectionConfig(
+                model_path=self.config.detection.model_path,
+                model_type=self.config.detection.model_type,
+                confidence_threshold=self.config.detection.confidence_threshold,
+                iou_threshold=self.config.detection.iou_threshold,
+                device=self.config.detection.device,
+            )
 
-            # For now, return empty results with warning
-            self.detected_components = []
+            components, raw_detections = detect_components(
+                image,
+                config=detection_config,
+                use_slicing=True,
+            )
 
-            self.logger.warning("Stage 2: Detection model not yet loaded")
+            self.detected_components = components
+            self.logger.info(f"Detected {len(components)} components")
+
+            # Create issues for low confidence detections
+            for comp in components:
+                if comp.confidence < 0.7:
+                    self.human_review_issues.append(HumanReviewIssue(
+                        issue_type=IssueType.LOW_CONFIDENCE_DETECTION,
+                        bbox=comp.bbox,
+                        description=f"Low confidence detection: {comp.designator}",
+                        confidence=comp.confidence,
+                        suggestions=[comp.designator],
+                    ))
 
             return StageResult(
                 stage_name="stage2_detection",
                 success=True,
-                data={"components": [], "detection_count": 0},
-                warnings=["Detection model not implemented yet"],
+                data={
+                    "components": components,
+                    "raw_detections": raw_detections,
+                    "detection_count": len(components),
+                },
                 processing_time=time.time() - start_time,
             )
 
@@ -202,36 +225,52 @@ class aversPipeline:
 
     def stage3_ocr_text(
         self,
-        image: Optional[np.ndarray] = None,
+        image: np.ndarray,
     ) -> StageResult:
-        """
-        Stage 3: OCR text recognition and association.
-
-        Args:
-            image: Input image
-
-        Returns:
-            StageResult with recognized text
-        """
+        """Stage 3: OCR text recognition."""
         start_time = time.time()
-        self.logger.info("Stage 3: OCR Text Recognition (PaddleOCR)")
+        self.logger.info("Stage 3: OCR Text Recognition")
 
         try:
-            # Placeholder for OCR implementation
-            # Would use:
-            # - PaddleOCR with DBNet + CRNN
-            # - Text direction classification (0°, 90°, 270°)
-            # - Regex validation for ГОСТ designations
+            ocr_config = OCRConfig(
+                lang=self.config.ocr.lang,
+                use_angle_cls=self.config.ocr.enable_angle_cls,
+                text_confidence_threshold=self.config.ocr.text_confidence_threshold,
+            )
 
-            text_labels = []
+            labels, raw_results = recognize_schematic_text(image, config=ocr_config)
+            self.text_labels = labels
 
-            self.logger.warning("Stage 3: OCR model not yet loaded")
+            self.logger.info(f"OCR recognized {len(labels)} text labels")
+
+            # Build text association engine
+            self._text_association = TextAssociationEngine(
+                association_radius=self.config.graph_synthesis.text_association_radius,
+            )
+            # Add OCR results
+            from avers.stages.stage3_ocr import OCRResult
+            for result in raw_results:
+                self._text_association.add_labels([result])
+
+            # Create issues for low confidence text
+            for label in labels:
+                if label.confidence < self.config.ocr.text_confidence_threshold:
+                    self.human_review_issues.append(HumanReviewIssue(
+                        issue_type=IssueType.LOW_CONFIDENCE_TEXT,
+                        bbox=label.bbox,
+                        description=f"Low confidence text: '{label.text}'",
+                        confidence=label.confidence,
+                        suggestions=[label.text],
+                    ))
 
             return StageResult(
                 stage_name="stage3_ocr",
                 success=True,
-                data={"text_labels": text_labels, "text_count": 0},
-                warnings=["OCR model not implemented yet"],
+                data={
+                    "labels": labels,
+                    "raw_results": raw_results,
+                    "text_count": len(labels),
+                },
                 processing_time=time.time() - start_time,
             )
 
@@ -248,37 +287,54 @@ class aversPipeline:
 
     def stage4_vectorize_wires(
         self,
-        image: Optional[np.ndarray] = None,
+        image: np.ndarray,
     ) -> StageResult:
-        """
-        Stage 4: Vectorize wire traces using OpenCV.
-
-        Args:
-            image: Input image with wires
-
-        Returns:
-            StageResult with wire segments
-        """
+        """Stage 4: Vectorize wire traces."""
         start_time = time.time()
-        self.logger.info("Stage 4: Wire Vectorization (OpenCV)")
+        self.logger.info("Stage 4: Wire Vectorization")
 
         try:
-            # Placeholder for vectorization
-            # Would:
-            # 1. Create exclusion mask from УГО bboxes
-            # 2. Skeletonize lines (Guo-Hall or Zhang-Suen)
-            # 3. Extract polylines
-            # 4. RDP simplification
+            # Collect exclusion bboxes
+            ugo_bboxes = [comp.bbox for comp in self.detected_components]
+            text_bboxes = [label.bbox for label in self.text_labels]
 
-            wire_segments = []
+            vectorization_config = VectorizationConfig(
+                skeletonize_method=self.config.vectorization.skeletonize_method,
+                rdp_epsilon=self.config.vectorization.rdp_epsilon,
+                hough_min_line_length=self.config.vectorization.line_thickness_threshold,
+            )
 
-            self.logger.warning("Stage 4: Vectorization not implemented yet")
+            segments, junctions = vectorize_wires(
+                image,
+                ugo_bboxes=ugo_bboxes,
+                text_bboxes=text_bboxes,
+                config=vectorization_config,
+            )
+
+            self.wire_segments = segments
+            self.junction_points = junctions
+
+            self.logger.info(f"Vectorized {len(segments)} wire segments, found {len(junctions)} junctions")
+
+            # Create issues for suspicious crossings
+            for junc in junctions:
+                bbox = (junc[0] - 50, junc[1] - 50, junc[0] + 50, junc[1] + 50)
+                self.human_review_issues.append(HumanReviewIssue(
+                    issue_type=IssueType.SUSPICIOUS_CROSSING,
+                    bbox=bbox,
+                    description="Wire junction requiring verification",
+                    confidence=0.5,
+                ))
 
             return StageResult(
                 stage_name="stage4_vectorization",
                 success=True,
-                data={"wire_segments": wire_segments, "segment_count": 0},
-                warnings=["Vectorization not implemented yet"],
+                data={
+                    "segments": segments,
+                    "junctions": junctions,
+                    "segment_count": len(segments),
+                    "junction_count": len(junctions),
+                },
                 processing_time=time.time() - start_time,
             )
 
@@ -308,66 +364,72 @@ class aversPipeline:
 
     def stage5_build_graph(
         self,
-        wire_segments: Optional[List[WireSegment]] = None,
-        components: Optional[List[Component]] = None,
-        text_labels: Optional[List[Dict]] = None,
     ) -> StageResult:
-        """
-        Stage 5: Build topological graph from components and wires.
-
-        Args:
-            wire_segments: Vectorized wire segments
-            components: Detected components
-            text_labels: OCR text labels
-
-        Returns:
-            StageResult with graph and extracted nets
-        """
+        """Stage 5: Build topological graph from components and wires."""
         start_time = time.time()
-        self.logger.info("Stage 5: Graph Synthesis (NetworkX)")
+        self.logger.info("Stage 5: Graph Synthesis")
 
         try:
-            # Add wire segments to graph builder
-            if wire_segments:
-                for seg in wire_segments:
-                    self.graph_builder.add_wire_segment(
-                        start=seg.start,
-                        end=seg.end,
-                        points=seg.points,
-                        confidence=seg.confidence,
-                    )
+            # Clear previous state
+            self._graph_builder = None
+            builder = self.graph_builder
+
+            # Add wire segments
+            for seg in self.wire_segments:
+                builder.add_wire_segment(
+                    start=seg.start,
+                    end=seg.end,
+                    points=seg.points,
+                    confidence=seg.confidence,
+                )
+
+            self.logger.debug(f"Added {len(self.wire_segments)} wire segments")
 
             # Add component pins
-            if components:
-                pins = []
-                for comp in components:
-                    for pin in comp.pins:
-                        pins.append(PinReference(
-                            component_id=comp.id,
-                            pin_number=pin.pin_number,
-                            coord=tuple(pin.coord),
-                        ))
+            pins = []
+            for comp in self.detected_components:
+                for pin in comp.pins:
+                    pins.append(PinReference(
+                        component_id=comp.id,
+                        pin_number=pin.pin_number,
+                        coord=tuple(pin.coord),
+                    ))
 
-                self.graph_builder.add_component_pins(pins)
+            builder.add_component_pins(pins)
+            self.logger.debug(f"Added {len(pins)} component pins")
 
             # Snap wires to pins
-            snapping = self.graph_builder.snap_wire_to_pins()
+            snapping = builder.snap_wire_to_pins()
             snapped_count = sum(1 for p in snapping.values() if p is not None)
-            self.logger.debug(f"Snapped {snapped_count} wires to pins")
+            self.logger.info(f"Snapped {snapped_count} wire endpoints to pins")
 
             # Merge collinear segments
-            merged = self.graph_builder.merge_collinear_segments()
-            if merged > 0:
+            if self.config.graph_synthesis.merge_collinear_segments:
+                merged = builder.merge_collinear_segments()
                 self.logger.debug(f"Merged {merged} collinear segments")
 
             # Build graph
-            graph = self.graph_builder.build_graph()
-            self.logger.debug(f"Graph built: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
+            graph = builder.build_graph()
+            self.logger.info(f"Graph: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
+
+            # Associate text labels with components
+            text_dicts = [
+                {"text": label.text, "coord": label.coord}
+                for label in self.text_labels
+            ]
+            text_associations = builder.associate_text_labels(text_dicts)
+
+            # Update component text associations
+            for comp in self.detected_components:
+                comp_center = (
+                    (comp.bbox[0] + comp.bbox[2]) // 2,
+                    (comp.bbox[1] + comp.bbox[3]) // 2,
+                )
+                nearby_labels = builder.associate_text_labels([{"text": "", "coord": comp_center}])
+                # Simplified - would use proper association
 
             # Extract nets
-            nets_data = self.graph_builder.extract_nets(
-                [c.model_dump() for c in components] if components else []
-            )
+            nets_data = builder.extract_nets([c.model_dump() for c in self.detected_components])
 
             # Convert to Net objects
             nets = []
@@ -376,21 +438,15 @@ class aversPipeline:
                     net_id=net_data["net_id"],
                     connections=[
                         WireConnection(**conn)
-                        for conn in net_data["connections"]
+                        for conn in net_data.get("connections", [])
                     ],
-                    path_points=net_data["path_points"],
-                    confidence=net_data["confidence"],
+                    path_points=net_data.get("path_points", []),
+                    confidence=net_data.get("confidence", 1.0),
                 )
                 nets.append(net)
 
             self.detected_nets = nets
-
-            # Associate text labels
-            text_associations = {}
-            if text_labels:
-                text_associations = self.graph_builder.associate_text_labels(text_labels)
-
-            processing_time = time.time() - start_time
+            self.logger.info(f"Extracted {len(nets)} electrical nets")
 
             return StageResult(
                 stage_name="stage5_graph_synthesis",
@@ -403,7 +459,7 @@ class aversPipeline:
                     "edge_count": graph.number_of_edges(),
                     "net_count": len(nets),
                 },
-                processing_time=processing_time,
+                processing_time=time.time() - start_time,
             )
 
         except Exception as e:
@@ -419,45 +475,85 @@ class aversPipeline:
 
     def stage6_vlm_arbitrate(
         self,
-        issues: Optional[List[HumanReviewIssue]] = None,
+        image: np.ndarray,
     ) -> StageResult:
-        """
-        Stage 6: Resolve ambiguities using Vision-Language Model.
-
-        Args:
-            issues: List of issues to resolve
-
-        Returns:
-            StageResult with resolved issues
-        """
+        """Stage 6: Resolve ambiguities using VLM."""
         start_time = time.time()
         self.logger.info("Stage 6: VLM Arbitration")
 
         if not self.config.vlm_arbitrator.enabled:
-            self.logger.info("VLM arbitration disabled in config")
+            self.logger.info("VLM arbitration disabled")
             return StageResult(
                 stage_name="stage6_vlm_arbitrator",
                 success=True,
-                data={"resolved_issues": [], "vlm_calls": 0},
+                data={"resolved_count": 0, "vlm_calls": 0},
                 warnings=["VLM arbitration disabled"],
                 processing_time=time.time() - start_time,
             )
 
         try:
-            # Placeholder for VLM integration
-            # Would:
-            # 1. Extract ROI crops (256x256)
-            # 2. Query VLM with structured prompt
-            # 3. Parse JSON response
-            # 4. Update confidence scores
+            # Create issues from pending human review items
+            junction_bboxes = [
+                issue.bbox for issue in self.human_review_issues
+                if issue.issue_type in (IssueType.SUSPICIOUS_CROSSING, IssueType.UNKNOWN_CONNECTION)
+            ]
 
-            self.logger.warning("Stage 6: VLM model not yet integrated")
+            issues = create_issues_from_detections(
+                wire_junctions=[],  # Would get from graph
+                junction_dots=[],  # Would get from detection
+                low_confidence_texts=[
+                    (issue.bbox, issue.confidence)
+                    for issue in self.human_review_issues
+                    if issue.issue_type == IssueType.LOW_CONFIDENCE_TEXT
+                ],
+            )
+
+            if not issues:
+                self.logger.info("No issues requiring VLM arbitration")
+                return StageResult(
+                    stage_name="stage6_vlm_arbitrator",
+                    success=True,
+                    data={"resolved_count": 0, "vlm_calls": 0},
+                    processing_time=time.time() - start_time,
+                )
+
+            # Limit to max calls
+            max_calls = self.config.vlm_arbitrator.max_vlm_calls
+            issues_to_process = issues[:max_calls]
+
+            vlm_config = VLMConfig(
+                model_name=self.config.vlm_arbitrator.model_name,
+                device=self.config.vlm_arbitrator.device,
+                roi_size=self.config.vlm_arbitrator.roi_size,
+                max_calls=max_calls,
+            )
+
+            vlm = VLMWrapper(vlm_config)
+            engine = ArbitrationEngine(vlm)
+
+            # Process issues
+            results = engine.process_issues(image, issues_to_process)
+
+            # Update human review issues with resolutions
+            resolved_count = 0
+            for issue, result in zip(issues_to_process, results):
+                if result.resolved:
+                    # Mark as potentially resolved
+                    issue.resolved = True
+                    issue.resolution = f"connected={result.connected}" if result.connected is not None else result.selected_text
+                    resolved_count += 1
+
+            self.logger.info(f"VLM resolved {resolved_count}/{len(issues_to_process)} issues "
+                           f"({engine.calls_made} calls)")
 
             return StageResult(
                 stage_name="stage6_vlm_arbitrator",
                 success=True,
-                data={"resolved_issues": [], "vlm_calls": 0},
-                warnings=["VLM model not implemented yet"],
+                data={
+                    "resolved_count": resolved_count,
+                    "total_issues": len(issues),
+                    "vlm_calls": engine.calls_made,
+                },
                 processing_time=time.time() - start_time,
             )
 
@@ -481,23 +577,23 @@ class aversPipeline:
     ) -> AVERSManifest:
         """
         Run full processing pipeline on a schematic image.
-
+        
         Args:
-            image_path: Path to input image (TIF, PNG, PDF)
-            output_path: Path for output file (optional)
-            output_format: Output format ('json' or 'xml')
+            image_path: Path to input image
+            output_path: Path for output file
+            output_format: 'json' or 'xml'
             skip_stages: List of stage names to skip
-
+            
         Returns:
             AVERSManifest with all extracted data
         """
         start_time = time.time()
         image_path = Path(image_path)
 
-        self.logger.info(f"=" * 60)
+        self.logger.info("=" * 60)
         self.logger.info(f"AVERS Pipeline Starting")
         self.logger.info(f"Input: {image_path}")
-        self.logger.info(f"=" * 60)
+        self.logger.info("=" * 60)
 
         # Load image
         self.logger.info("Loading image...")
@@ -506,11 +602,14 @@ class aversPipeline:
         self.logger.info(f"Image loaded: {width}x{height} px")
 
         # Get image metadata
-        import PIL.Image
-        img = PIL.Image.open(image_path)
-        dpi = img.info.get("dpi", (300, 300))
-        if isinstance(dpi, tuple):
-            dpi = dpi[0]
+        try:
+            import PIL.Image
+            img = PIL.Image.open(image_path)
+            dpi = img.info.get("dpi", (300, 300))
+            if isinstance(dpi, tuple):
+                dpi = dpi[0]
+        except Exception:
+            dpi = 300
 
         # Initialize manifest
         manifest = AVERSManifest(
@@ -526,46 +625,36 @@ class aversPipeline:
         skip_stages = skip_stages or []
         self.stage_results = {}
 
-        # Stage 1: Slicing
-        if "stage1" not in skip_stages:
-            result = self.stage1_slice_image(image)
-            self.stage_results["stage1"] = result
+        # Run all stages
+        stage_names = ["stage1", "stage2", "stage3", "stage4", "stage5", "stage6"]
+        stage_methods = [
+            ("stage1", lambda: self.stage1_slice_image(image)),
+            ("stage2", lambda: self.stage2_detect_ugo(image)),
+            ("stage3", lambda: self.stage3_ocr_text(image)),
+            ("stage4", lambda: self.stage4_vectorize_wires(image)),
+            ("stage5", lambda: self.stage5_build_graph()),
+            ("stage6", lambda: self.stage6_vlm_arbitrate(image)),
+        ]
 
-        # Stage 2: Detection (placeholder)
-        if "stage2" not in skip_stages:
-            result = self.stage2_detect_ugo(image)
-            self.stage_results["stage2"] = result
-            manifest.components = self.detected_components
+        for stage_name, stage_func in stage_methods:
+            if stage_name in skip_stages:
+                self.logger.info(f"Skipping {stage_name}")
+                continue
 
-        # Stage 3: OCR (placeholder)
-        if "stage3" not in skip_stages:
-            result = self.stage3_ocr_text(image)
-            self.stage_results["stage3"] = result
-            text_labels = result.data.get("text_labels", []) if result.success else []
+            result = stage_func()
+            self.stage_results[stage_name] = result
 
-        # Stage 4: Vectorization (placeholder)
-        if "stage4" not in skip_stages:
-            result = self.stage4_vectorize_wires(image)
-            self.stage_results["stage4"] = result
-            wire_segments = result.data.get("wire_segments", []) if result.success else []
+            if not result.success:
+                self.logger.error(f"{stage_name} failed, continuing with partial results")
 
-        # Stage 5: Graph synthesis
-        if "stage5" not in skip_stages:
-            result = self.stage5_build_graph(
-                wire_segments=wire_segments if "stage4" in skip_stages else None,
-                components=manifest.components,
-                text_labels=text_labels if "stage3" in skip_stages else None,
-            )
-            self.stage_results["stage5"] = result
-            manifest.nets = self.detected_nets
-
-        # Stage 6: VLM arbitration
-        if "stage6" not in skip_stages:
-            result = self.stage6_vlm_arbitrate(manifest.human_review_required)
-            self.stage_results["stage6"] = result
+        # Populate manifest
+        manifest.components = self.detected_components
+        manifest.nets = self.detected_nets
+        manifest.human_review_required = self.human_review_issues
 
         # Update processing time
-        manifest.schema_metadata.processing_time_seconds = time.time() - start_time
+        total_time = time.time() - start_time
+        manifest.schema_metadata.processing_time_seconds = total_time
 
         # Save output
         if output_path:
@@ -573,7 +662,6 @@ class aversPipeline:
             manifest.save(output_path, format=output_format)
 
         # Summary
-        total_time = time.time() - start_time
         self.logger.info("=" * 60)
         self.logger.info("Pipeline Complete")
         self.logger.info(f"Components found: {len(manifest.components)}")
@@ -584,47 +672,49 @@ class aversPipeline:
 
         return manifest
 
-    def process_tiles_parallel(
+    def visualize_results(
         self,
         image: np.ndarray,
-        process_func,  # Function to apply to each tile
-        num_workers: int = 4,
-    ) -> List[Any]:
+        output_path: Optional[Path] = None,
+    ) -> np.ndarray:
         """
-        Process tiles in parallel.
-
+        Create visualization of pipeline results.
+        
         Args:
-            image: Full image
-            process_func: Function that takes a Tile and returns results
-            num_workers: Number of parallel workers
-
+            image: Original image
+            output_path: Path to save visualization
+            
         Returns:
-            List of results from each tile
+            Visualization image
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        vis = image.copy()
+        if len(vis.shape) == 2:
+            vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
 
-        tiles = list(self.slicing_engine.generate_tiles(image))
-        results = []
+        # Draw components
+        for comp in self.detected_components:
+            x1, y1, x2, y2 = comp.bbox
+            color = (0, 255, 0) if comp.confidence > 0.7 else (0, 255, 255)
+            cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
+            
+            # Draw label
+            cv2.putText(vis, comp.designator, (x1, y1 - 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = {
-                executor.submit(process_func, tile): tile
-                for tile in tiles
-            }
+        # Draw wire segments
+        for seg in self.wire_segments:
+            cv2.line(vis, seg.start, seg.end, (100, 100, 100), 2)
 
-            for future in as_completed(futures):
-                tile = futures[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    self.logger.error(f"Tile {tile.tile_id} failed: {e}")
-                    results.append(None)
+        # Draw junctions
+        for junc in self.junction_points:
+            cv2.circle(vis, junc, 5, (0, 0, 255), -1)
 
-        return results
+        if output_path:
+            cv2.imwrite(str(output_path), vis)
+
+        return vis
 
 
-# Convenience function
 def process_schematic(
     image_path: str | Path,
     output_path: Optional[str | Path] = None,
@@ -632,12 +722,12 @@ def process_schematic(
 ) -> AVERSManifest:
     """
     Process a schematic image with default settings.
-
+    
     Args:
         image_path: Path to input image
         output_path: Path for output file
         config: Optional configuration
-
+        
     Returns:
         AVERSManifest with results
     """
