@@ -171,6 +171,9 @@ bash scripts/smoke_test.sh
 
 | Симптом | Причина / решение |
 |---|---|
+| Найдено 1–2 «компонента»-мусора (например «diode» на весь лист), текста нет, всё быстро (мс) | Работают **заглушки**: нет обученной модели ГОСТ УГО и/или OCR. Web UI покажет это жёлтыми предупреждениями во вкладке «Проверки». Лечение: `pip install ultralytics sahi` → обучить модель (раздел 2-В) → прописать веса в `config.yaml` → `detection.model_path`; для текста `pip install paddleocr paddlepaddle` |
+| Обработка «успешна», но во вкладке «Проверки» жёлтые предупреждения | Читать их — они прямо говорят, какая стадия работала на заглушке или без модели |
+| На входе **сборочный чертёж жгута** (таблицы контактов, как «Рис. 4.7»), а распознаются схемы плохо | Синтетический датасет обучает детектор на **УГО принципиальных схем** (разъёмы, пины, точки). Для сборочных чертежей дообучите модель на своей разметке — встроенный аннотатор `/annotator` (YOLO/COCO экспорт). Также скан 1138×822 мал: нужно 300 DPI |
 | `set: pipefail: invalid option name` при запуске `scripts/*.sh` | Скрипты выгружены с Windows-переводами строк (CRLF). Разово: `sed -i 's/\r$//' scripts/*.sh`. Навсегда: обновите репозиторий — в `.gitattributes` теперь `*.sh text eol=lf`, затем `git rm --cached -r scripts && git checkout -- scripts` |
 | `ImportError: libGL.so.1` | Установился `opencv-python` вместо headless: `pip uninstall -y opencv-python && pip install --force-reinstall --no-deps opencv-python-headless` |
 | `device='cuda' but CUDA unavailable` | Нет GPU → используйте `--device auto` или `--device cpu` (теперь это дефолт) |

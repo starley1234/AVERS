@@ -85,12 +85,14 @@ class SlicedDetector:
         self._sahi = get_sahi_integration()
         self._model = None
         self._loaded = False
-    
+        # 'sahi' (реальная модель) или 'mock' (заглушка по контурам)
+        self.backend: Optional[str] = None
+
     def load(self) -> bool:
         """Load detection model."""
         if self._loaded:
             return True
-        
+
         try:
             if self._sahi is not None:
                 return self._load_sahi_model()
@@ -112,6 +114,12 @@ class SlicedDetector:
         else:
             model_type = "yolov8"
         
+        if self.model_path is None:
+            logger.warning(
+                "detection.model_path не задан - SAHI скачает COCO-модель по умолчанию, "
+                "НЕ обученную на ГОСТ УГО (результаты будут бессмысленными)"
+            )
+
         self._model = AutoDetectionModel.from_pretrained(
             model_type=model_type,
             model_path=self.model_path,
@@ -127,6 +135,7 @@ class SlicedDetector:
         )
         
         self._loaded = True
+        self.backend = "sahi"
         logger.info(f"SAHI model loaded: {self.model_type}")
         return True
     
@@ -134,6 +143,7 @@ class SlicedDetector:
         """Load fallback model (mock detection)."""
         logger.info("Using fallback detector (mock mode)")
         self._loaded = True
+        self.backend = "mock"
         return True
     
     def detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
@@ -557,7 +567,7 @@ class ProductionPipeline:
         # Stage 1: Detection
         stage_start = time.time()
         try:
-            detections, component_bboxes = self._run_detection(image)
+            detections, component_bboxes = self._run_detection(image, result)
             result.manifest.components = self._group_components(detections)
         except Exception as e:
             result.errors.append(f"Detection failed: {e}")
@@ -569,7 +579,7 @@ class ProductionPipeline:
         # Stage 2: OCR
         stage_start = time.time()
         try:
-            texts, text_bboxes = self._run_ocr(image)
+            texts, text_bboxes = self._run_ocr(image, result)
             # Associate texts with components
             self._associate_texts(result.manifest.components, texts)
         except Exception as e:
@@ -633,7 +643,7 @@ class ProductionPipeline:
         return result
     
     def _run_detection(
-        self, image: np.ndarray
+        self, image: np.ndarray, result: "PipelineResult"
     ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]]]:
         """Run component detection."""
         detector = SlicedDetector(
@@ -644,10 +654,25 @@ class ProductionPipeline:
             slice_size=self.config.slicing.tile_size,
             overlap_ratio=self.config.slicing.overlap_ratio,
         )
-        
+        detector.load()
         detections = detector.detect(image)
         bboxes = [d["bbox"] for d in detections]
-        
+
+        # Честно сообщаем, если работаем не на обученной модели
+        if detector.backend == "mock":
+            result.warnings.append(
+                "Стадия 2 (детекция УГО): модель НЕ загружена — работает заглушка по контурам, "
+                "результаты недостоверны. Установите ML-зависимости (pip install ultralytics sahi), "
+                "обучите модель (python -m avers dataset train) и укажите веса в config.yaml → "
+                "detection.model_path (см. QUICKSTART.md, раздел 2-В)."
+            )
+        elif detector.backend == "sahi" and detector.model_path is None:
+            result.warnings.append(
+                "Стадия 2 (детекция УГО): detection.model_path не задан — используется COCO-модель "
+                "по умолчанию, НЕ обученная на ГОСТ УГО. Обучите модель на синтетическом датасете "
+                "(см. QUICKSTART.md, раздел 2-В) и укажите best.pt в config.yaml → detection.model_path."
+            )
+
         return detections, bboxes
     
     def _group_components(
@@ -721,14 +746,21 @@ class ProductionPipeline:
         return components
     
     def _run_ocr(
-        self, image: np.ndarray
+        self, image: np.ndarray, result: "PipelineResult"
     ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]]]:
         """Run OCR."""
         ocr = SchematicOCR(
             lang=self.config.ocr.lang,
             confidence_threshold=self.config.ocr.text_confidence_threshold,
         )
-        
+        ocr.load()
+        if getattr(ocr, "_backend", None) == "mock":
+            result.warnings.append(
+                "Стадия 3 (OCR): PaddleOCR/EasyOCR не установлены — текст НЕ распознаётся "
+                "(обозначения, номера контактов и проводов будут пропущены). "
+                "Установите: pip install paddleocr paddlepaddle (Python 3.11/3.12) или easyocr."
+            )
+
         texts = ocr.recognize(image)
         bboxes = [t["bbox"] for t in texts]
         

@@ -690,6 +690,10 @@ body {
 
       <div id="tab-issues" style="display:none">
         <div class="section">
+          <div class="section-label">Предупреждения пайплайна: <span id="warnCount">0</span></div>
+          <div class="list" id="warnList"><div class="empty"><div class="empty-text">Нет предупреждений</div></div></div>
+        </div>
+        <div class="section" style="margin-top:16px">
           <div class="section-label">Требуют проверки: <span id="issueCount">0</span></div>
           <div class="list" id="issueList"><div class="empty"><div class="empty-text">Нет проблем</div></div></div>
         </div>
@@ -989,6 +993,7 @@ async function runPipeline() {
   document.getElementById('runBtn').disabled = true;
   document.getElementById('runBtn').textContent = '⏳ Обработка...';
   document.getElementById('statusText').textContent = 'Запуск пайплайна...';
+  renderWarnings([]);
   
   // Reset stages
   document.querySelectorAll('.stage').forEach(s=>{ s.classList.remove('active','done'); });
@@ -1038,7 +1043,9 @@ async function pollStatus() {
       document.getElementById('runBtn').textContent = '▶ Запустить обработку';
       
       if (job.status === 'completed') {
-        document.getElementById('statusText').textContent = `Готово · ${Object.keys(job.stage_timings).length} стадий`;
+        renderWarnings(job.warnings||[]);
+        const wn = (job.warnings||[]).length;
+        document.getElementById('statusText').textContent = `Готово · ${Object.keys(job.stage_timings).length} стадий` + (wn ? ` · ⚠ предупреждений: ${wn}` : '');
         document.getElementById('statusPerf').textContent = Object.entries(job.stage_timings).map(([k,v])=>`${k}:${(v*1000).toFixed(0)}ms`).join(' · ');
         loadResult();
       } else {
@@ -1103,6 +1110,17 @@ function renderNets(nets) {
     <div class="list-item">
       <div class="item-top"><span class="item-title">${n.net_id}</span><span class="item-badge">${n.connections?.length||0} conn</span></div>
       <div class="item-meta">${n.wire_type||''} ${n.wire_color||''} · точек: ${n.path_points?.length||0} · ${(n.confidence*100).toFixed(0)}%</div>
+    </div>
+  `).join('');
+}
+
+function renderWarnings(warns) {
+  const el = document.getElementById('warnList');
+  document.getElementById('warnCount').textContent = warns.length;
+  if (!warns.length) { el.innerHTML = '<div class="empty"><div class="empty-text">Нет предупреждений</div></div>'; return; }
+  el.innerHTML = warns.map(w=>`
+    <div class="issue" style="border-left:3px solid #f59e0b">
+      <div class="issue-desc" style="white-space:normal;line-height:1.5">⚠️ ${w}</div>
     </div>
   `).join('');
 }
