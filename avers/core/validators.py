@@ -668,6 +668,20 @@ class ProductionPipeline:
             text_bboxes = []
         
         result.stage_timings["ocr"] = time.time() - stage_start
+
+        # Распознанные тексты - в манифест (иначе UI не может их показать)
+        try:
+            from avers.core.types import RecognizedText
+            result.manifest.texts = [
+                RecognizedText(
+                    bbox=[int(v) for v in (t.get("bbox") or b)],
+                    text=str(t.get("text", "")),
+                    confidence=float(t.get("confidence", 0.0)),
+                )
+                for t, b in zip(texts, text_bboxes)
+            ]
+        except Exception as e:
+            logger.debug(f"Не удалось сохранить тексты в манифест: {e}")
         
         # Stage 3: Vectorization
         stage_start = time.time()

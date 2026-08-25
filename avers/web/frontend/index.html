@@ -319,8 +319,17 @@ body {
   pointer-events: none;
 }
 .canvas-overlay svg {
-  width: 100%; height: 100%;
+  /* Размеры задаются атрибутами = naturalWidth/Height картинки.
+     CSS width/height:100% растягивал viewBox по канве ПОВЕРХ transform -
+     из-за этого наложение (линии/боксы) не совпадало с изображением. */
+  transform-origin: 0 0;
+  overflow: visible;
 }
+.canvas.mode-roi { cursor: crosshair; }
+#roiGhost { position:absolute; border:2px dashed var(--accent); background:rgba(108,92,255,0.12); pointer-events:none; z-index:6; display:none; }
+#roiBar { position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:10;
+  background:rgba(20,20,22,0.96); border:1px solid var(--border2); border-radius:10px;
+  padding:8px 12px; display:none; align-items:center; gap:10px; font-size:12px; }
 
 /* Layers toggle */
 .layers {
@@ -646,7 +655,8 @@ body {
         <button class="tool-btn" data-vis="diff" onclick="setVis('diff')" title="Diff оригинал vs вектор">🎚️</button>
       </div>
       <div class="toolbar-group">
-        <button class="tool-btn" onclick="window.open('/visualize','_blank')" title="Открыть расширенную визуализацию">🎬 3D</button>
+        <button class="tool-btn" id="roiBtn" onclick="toggleRoiMode()" title="Выделить область и обработать только её">⬚ Область</button>
+        <button class="tool-btn" onclick="window.open('/visualize','_blank')" title="Открыть расширенную визуализацию">🎬 Визуализация</button>
       </div>
       <div class="toolbar-group">
         <span style="font-size:11px;color:var(--text2)" id="zoomLabel">100%</span>
@@ -656,6 +666,12 @@ body {
     <div class="canvas" id="canvas">
       <img id="canvasImg" style="display:none">
       <div class="canvas-overlay"><svg id="overlaySvg"></svg></div>
+      <div id="roiGhost"></div>
+      <div id="roiBar">
+        <span id="roiDims">—</span>
+        <button class="btn btn-primary" style="height:28px;padding:0 12px;font-size:12px" onclick="processROI()">▶ Обработать область</button>
+        <button class="btn" style="height:28px;padding:0 12px;font-size:12px" onclick="cancelROI()">✕</button>
+      </div>
       <div class="empty" id="canvasEmpty">
         <div class="empty-icon">🖼</div>
         <div class="empty-text">Загрузите схему для начала работы<br><span style="font-size:10px;color:var(--text3)">Поддерживается drag & drop</span></div>
@@ -869,6 +885,10 @@ let state = {
   jobId: null,
   manifest: null,
   zoom: 1,
+  roiMode: false,
+  roiDrawing: false,
+  roiStart: null,
+  roi: null,
   pan: {x:0, y:0},
   dragging: false,
   dragStart: {x:0, y:0},
@@ -1179,24 +1199,144 @@ function focusIssue(idx) {
 const canvas = document.getElementById('canvas');
 const canvasImg = document.getElementById('canvasImg');
 
+function imagePoint(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left - state.pan.x)/state.zoom,
+    y: (e.clientY - rect.top  - state.pan.y)/state.zoom,
+  };
+}
+
 canvas.addEventListener('mousedown', (e)=>{
-  state.dragging = true;
-  state.dragStart = {x:e.clientX - state.pan.x, y:e.clientY - state.pan.y};
-});
-window.addEventListener('mouseup', ()=>state.dragging=false);
-window.addEventListener('mousemove', (e)=>{
-  if (!state.dragging) {
-    // Update coords label
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left - state.pan.x)/state.zoom;
-    const y = (e.clientY - rect.top - state.pan.y)/state.zoom;
-    document.getElementById('coordsLabel').textContent = `${Math.round(x)}, ${Math.round(y)}`;
+  // Режим "Область": левая кнопка рисует ROI (пан - средней кнопкой)
+  if (state.roiMode && e.button === 0 && canvasImg.naturalWidth) {
+    e.preventDefault();
+    state.roiDrawing = true;
+    state.roiStart = imagePoint(e);
     return;
   }
+  if (e.button === 1 || (e.button === 0 && !state.roiMode)) {
+    state.dragging = true;
+    state.dragStart = {x:e.clientX - state.pan.x, y:e.clientY - state.pan.y};
+    if (e.button === 1) e.preventDefault();
+  }
+});
+window.addEventListener('mouseup', (e)=>{
+  if (state.roiDrawing) { finishRoiDraw(e); return; }
+  state.dragging = false;
+});
+window.addEventListener('mousemove', (e)=>{
+  const pt = imagePoint(e);
+  document.getElementById('coordsLabel').textContent = `${Math.round(pt.x)}, ${Math.round(pt.y)}`;
+  
+  if (state.roiDrawing && state.roiStart) {
+    state.roi = [state.roiStart.x, state.roiStart.y, pt.x, pt.y];
+    updateRoiGhost();
+    return;
+  }
+  if (!state.dragging) return;
   state.pan.x = e.clientX - state.dragStart.x;
   state.pan.y = e.clientY - state.dragStart.y;
   updateTransform();
 });
+
+window.addEventListener('keydown', (e)=>{
+  if (e.key === 'Escape' && state.roiMode) toggleRoiMode(false);
+});
+
+function toggleRoiMode(force) {
+  state.roiMode = (force === undefined) ? !state.roiMode : force;
+  canvas.classList.toggle('mode-roi', state.roiMode);
+  document.getElementById('roiBtn').classList.toggle('active', state.roiMode);
+  if (!state.roiMode) { state.roi = null; updateRoiGhost(); document.getElementById('roiBar').style.display = 'none'; }
+  else document.getElementById('statusText').textContent = 'Область: тяните рамку на схеме. Пан - средней кнопкой. Esc - отмена.';
+  if (!state.roiMode) renderOverlay();
+}
+
+function updateRoiGhost() {
+  const ghost = document.getElementById('roiGhost');
+  if (!state.roi) { ghost.style.display = 'none'; renderOverlay(); return; }
+  const [x1i, y1i, x2i, y2i] = state.roi;
+  const rect = canvas.getBoundingClientRect();
+  const left = Math.min(x1i,x2i)*state.zoom + state.pan.x;
+  const top  = Math.min(y1i,y2i)*state.zoom + state.pan.y;
+  const w = Math.abs(x2i-x1i)*state.zoom, h = Math.abs(y2i-y1i)*state.zoom;
+  ghost.style.display = 'block';
+  ghost.style.left = left+'px'; ghost.style.top = top+'px';
+  ghost.style.width = w+'px'; ghost.style.height = h+'px';
+  // размеры области в пикселях ИЗОБРАЖЕНИЯ
+  document.getElementById('roiDims').textContent =
+    `Область: ${Math.round(Math.abs(x2i-x1i))}×${Math.round(Math.abs(y2i-y1i))} px`;
+}
+
+function finishRoiDraw(e) {
+  state.roiDrawing = false;
+  if (!state.roi) return;
+  const [x1,y1,x2,y2] = state.roi;
+  const ix1 = Math.max(0, Math.min(x1,x2)), iy1 = Math.max(0, Math.min(y1,y2));
+  const ix2 = Math.min(canvasImg.naturalWidth, Math.max(x1,x2));
+  const iy2 = Math.min(canvasImg.naturalHeight, Math.max(y1,y2));
+  if (ix2-ix1 < 10 || iy2-iy1 < 10) { state.roi = null; updateRoiGhost(); return; }
+  state.roi = [ix1, iy1, ix2, iy2];
+  document.getElementById('roiBar').style.display = 'flex';
+  updateRoiGhost();
+}
+
+function cancelROI() {
+  state.roi = null;
+  document.getElementById('roiBar').style.display = 'none';
+  updateRoiGhost();
+  renderOverlay();
+}
+
+async function processROI() {
+  if (!state.roi || !canvasImg.naturalWidth) return;
+  const [x1,y1,x2,y2] = state.roi;
+  const rx = Math.max(0, Math.floor(Math.min(x1,x2)));
+  const ry = Math.max(0, Math.floor(Math.min(y1,y2)));
+  const rw = Math.min(canvasImg.naturalWidth - rx, Math.ceil(Math.abs(x2-x1)));
+  const rh = Math.min(canvasImg.naturalHeight - ry, Math.ceil(Math.abs(y2-y1)));
+  if (rw < 10 || rh < 10) return;
+  
+  const c = document.createElement('canvas');
+  c.width = rw; c.height = rh;
+  c.getContext('2d').drawImage(canvasImg, rx, ry, rw, rh, 0, 0, rw, rh);
+  document.getElementById('statusText').textContent = 'Вырезаю область...';
+  const blob = await new Promise(res=>c.toBlob(res, 'image/png'));
+  
+  const fd = new FormData();
+  fd.append('file', blob, 'roi.png');
+  const up = await fetch(`${API}/api/upload`, {method:'POST', body:fd});
+  const upData = await up.json();
+  const newId = upData.file_id;
+  
+  document.getElementById('statusText').textContent = 'Обработка области...';
+  const pr = await fetch(`${API}/api/process/${newId}`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+  });
+  const pj = await pr.json();
+  while (true) {
+    await new Promise(s=>setTimeout(s, 1000));
+    let st;
+    try { st = await (await fetch(`${API}/api/status/${pj.job_id}`)).json(); } catch(err) { continue; }
+    document.getElementById('statusText').textContent = `Обработка области: ${st.current_stage||'...'} ${st.progress!=null?st.progress+'%':''}`;
+    if (st.status === 'completed') break;
+    if (st.status === 'failed') { document.getElementById('statusText').textContent = 'Ошибка: '+(st.errors||[]).join(', '); return; }
+  }
+  
+  // Переключаемся на результат области
+  state.fileId = newId;
+  cancelROI();
+  toggleRoiMode(false);
+  state.visMode = 'original';
+  document.querySelectorAll('[data-vis]').forEach(b=>b.classList.remove('active'));
+  document.querySelector('[data-vis="original"]')?.classList.add('active');
+  canvasImg.src = `${API}/api/image/${newId}`;
+  await loadResult();
+  fitView();
+  renderOverlay();
+  document.getElementById('statusText').textContent = 'Область обработана — результат заменяет текущий';
+}
 
 canvas.addEventListener('wheel', (e)=>{
   e.preventDefault();
@@ -1321,6 +1461,24 @@ function renderOverlay() {
         circ.setAttribute('r','4'); circ.setAttribute('fill','#eab308'); circ.setAttribute('stroke','black'); circ.setAttribute('stroke-width','1');
         svg.appendChild(circ);
       });
+    });
+  }
+  
+  if (state.layers.text) {
+    state.manifest.texts?.forEach(t=>{
+      const [x1,y1,x2,y2] = t.bbox;
+      const rect = document.createElementNS(ns,'rect');
+      rect.setAttribute('x',x1); rect.setAttribute('y',y1);
+      rect.setAttribute('width',Math.max(2,x2-x1)); rect.setAttribute('height',Math.max(2,y2-y1));
+      rect.setAttribute('fill','rgba(59,130,246,0.10)'); rect.setAttribute('stroke','#3b82f6');
+      rect.setAttribute('stroke-width','1');
+      svg.appendChild(rect);
+      const tx = document.createElementNS(ns,'text');
+      tx.setAttribute('x',x1); tx.setAttribute('y',Math.max(10,y1-3));
+      tx.setAttribute('fill','#60a5fa'); tx.setAttribute('font-size','11');
+      tx.setAttribute('font-family','JetBrains Mono');
+      tx.textContent = t.text;
+      svg.appendChild(tx);
     });
   }
   

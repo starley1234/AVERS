@@ -186,12 +186,23 @@ class HumanReviewIssue(BaseModel):
     resolution: Optional[str] = Field(default=None, description="Resolution chosen by human")
 
 
+class RecognizedText(BaseModel):
+    """Распознанный OCR фрагмент текста с координатами на листе."""
+    bbox: List[int] = Field(description="[x1, y1, x2, y2] в пикселях исходного изображения")
+    text: str = Field(description="Распознанный текст")
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class AVERSManifest(BaseModel):
     """
     Complete output manifest from AVERS pipeline.
     Corresponds to the JSON Schema specified in the technical requirements.
     """
     schema_metadata: SchemaMetadata = Field(description="Source schematic metadata")
+    texts: List[RecognizedText] = Field(
+        default_factory=list,
+        description="Распознанные OCR-тексты (для UI и экспорта)"
+    )
     components: List[Component] = Field(
         default_factory=list,
         description="Detected components (УГО)"
