@@ -19,8 +19,10 @@ body {font-family: Inter, sans-serif; background:var(--bg); color:var(--text); h
 .main {flex:1; display:flex; overflow:hidden}
 .sidebar {width:300px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden}
 .canvas-wrap {flex:1; display:flex; flex-direction:column; background:#08080a; position:relative}
-.canvas {flex:1; position:relative; overflow:hidden; cursor:crosshair}
-.canvas img {position:absolute; max-width:none; transform-origin:0 0}
+.canvas {flex:1; position:relative; overflow:hidden; cursor:crosshair; touch-action:none}
+.canvas img {position:absolute; max-width:none; transform-origin:0 0; user-select:none; -webkit-user-drag:none; pointer-events:none}
+.canvas.mode-hand {cursor:grab}
+.canvas.mode-hand.panning {cursor:grabbing}
 .toolbar {height:44px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 12px; gap:8px}
 .tool-btn {width:28px; height:28px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--text2); cursor:pointer}
 .tool-btn.active {background:var(--accent); color:white}
@@ -56,23 +58,30 @@ body {font-family: Inter, sans-serif; background:var(--bg); color:var(--text); h
       <div style="font-size:11px; color:var(--text2); margin-bottom:6px">Горячие клавиши</div>
       <div style="font-size:10px; color:var(--text2); line-height:1.6">
         <b>1-9</b> выбор класса<br>
+        <b>D / H</b> бокс / панорама<br>
+        <b>Esc</b> снять выбор<br>
         <b>Del</b> удалить бокс<br>
-        <b>S</b> сохранить<br>
-        <b>Drag</b> нарисовать бокс
+        <b>Ctrl+S</b> сохранить<br>
+        <b>Колесо</b> зум, <b>средняя кнопка</b> — пан
       </div>
     </div>
   </div>
 
   <div class="canvas-wrap">
     <div class="toolbar">
-      <button class="tool-btn active" title="Select" onclick="setTool('select')">◈</button>
-      <button class="tool-btn" title="Draw bbox" onclick="setTool('draw')">✏️</button>
+      <button class="tool-btn" title="Панорама (или средняя кнопка мыши)" onclick="setTool('hand', this)">✋</button>
+      <button class="tool-btn active" title="Выбор боксов" onclick="setTool('select', this)">◈</button>
+      <button class="tool-btn" title="Рисовать бокс" onclick="setTool('draw', this)">✏️</button>
+      <span style="width:1px;height:18px;background:var(--border);margin:0 4px"></span>
+      <button class="tool-btn" title="Приблизить" onclick="zoomStep(1.25)">＋</button>
+      <button class="tool-btn" title="Отдалить" onclick="zoomStep(0.8)">－</button>
+      <button class="tool-btn" title="Вписать в окно" onclick="fitView(); state.userZoomed=false">⛶</button>
       <span style="font-size:11px; color:var(--text2); margin-left:12px" id="status">Выберите изображение</span>
       <span style="margin-left:auto; font-size:11px; color:var(--text2)" id="coords">—</span>
     </div>
     <div class="canvas" id="canvas">
       <img id="canvasImg" style="display:none">
-      <svg id="svg" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none"></svg>
+      <svg id="svg" style="position:absolute; top:0; left:0; pointer-events:none; overflow:visible; transform-origin:0 0"></svg>
       <div id="empty" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:13px">Загрузите изображение или выберите из списка</div>
     </div>
   </div>
@@ -102,7 +111,10 @@ let state = {
   startPoint: null,
   zoom: 1,
   pan: {x:0,y:0},
-  classColors: {}
+  classColors: {},
+  panning: false,
+  panStart: null,
+  userZoomed: false
 };
 
 const GOST_CLASSES = {
@@ -131,13 +143,30 @@ function init() {
   
   // Canvas events
   const canvas = document.getElementById('canvas');
+  const img = document.getElementById('canvasImg');
+  img.draggable = false;                       // отключаем нативный drag картинки
+  canvas.addEventListener('dragstart', e=>e.preventDefault());
   canvas.addEventListener('mousedown', onMouseDown);
-  canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mouseup', onMouseUp);
-  canvas.addEventListener('wheel', onWheel);
+  // move/up на window: рисование не залипает, если мышь ушла за канву
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('wheel', onWheel, {passive:false});
+  window.addEventListener('resize', ()=>{ if (!state.userZoomed && state.currentImage) fitView(); });
+  window.addEventListener('contextmenu', e=>{ if (e.target.closest('.canvas')) e.preventDefault(); });
   
   // Keyboard
   window.addEventListener('keydown', onKeyDown);
+}
+
+// Единый перевод экранных координат в координаты изображения
+function imagePoint(e) {
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left - state.pan.x) / state.zoom,
+    y: (e.clientY - rect.top  - state.pan.y) / state.zoom,
+    sx: e.clientX - rect.left,
+    sy: e.clientY - rect.top,
+  };
 }
 
 function selectClass(id) {
@@ -205,36 +234,76 @@ function fitView() {
 }
 
 function updateTransform() {
-  const img = document.getElementById('canvasImg');
-  img.style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
-  document.getElementById('svg').style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
+  const t = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
+  document.getElementById('canvasImg').style.transform = t;
+  document.getElementById('svg').style.transform = t;
+}
+
+function zoomStep(factor) {
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  zoomAt(rect.width/2, rect.height/2, factor);
+}
+
+function zoomAt(mx, my, factor) {
+  const wx = (mx - state.pan.x)/state.zoom;
+  const wy = (my - state.pan.y)/state.zoom;
+  state.zoom = Math.max(0.05, Math.min(40, state.zoom*factor));
+  state.pan.x = mx - wx*state.zoom;
+  state.pan.y = my - wy*state.zoom;
+  state.userZoomed = true;
+  updateTransform();
 }
 
 function onMouseDown(e) {
+  if (e.target.closest('.canvas') == null) return;
+  const pt = imagePoint(e);
+  
+  // Средняя кнопка или инструмент "рука" - панорама
+  if (e.button === 1 || (e.button === 0 && state.tool === 'hand')) {
+    e.preventDefault();
+    state.panning = true;
+    state.panStart = {mx: e.clientX, my: e.clientY, panX: state.pan.x, panY: state.pan.y};
+    document.getElementById('canvas').classList.add('panning');
+    return;
+  }
+  
+  if (e.button !== 0) return;
   if (state.tool !== 'draw' || !state.currentImage) return;
-  const rect = document.getElementById('canvas').getBoundingClientRect();
-  const x = (e.clientX - rect.left - state.pan.x)/state.zoom;
-  const y = (e.clientY - rect.top - state.pan.y)/state.zoom;
+  e.preventDefault();
   state.drawing = true;
-  state.startPoint = {x, y};
+  state.startPoint = {x: pt.x, y: pt.y};
+  const canvas = document.getElementById('canvas');
+  if (canvas.setPointerCapture && e.pointerId !== undefined) {
+    try { canvas.setPointerCapture(e.pointerId); } catch(err) {}
+  }
 }
 
 function onMouseMove(e) {
-  const rect = document.getElementById('canvas').getBoundingClientRect();
-  const x = (e.clientX - rect.left - state.pan.x)/state.zoom;
-  const y = (e.clientY - rect.top - state.pan.y)/state.zoom;
-  document.getElementById('coords').textContent = `${Math.round(x)}, ${Math.round(y)}`;
+  const pt = imagePoint(e);
+  document.getElementById('coords').textContent = `${Math.round(pt.x)}, ${Math.round(pt.y)}`;
+  
+  if (state.panning && state.panStart) {
+    state.pan.x = state.panStart.panX + (e.clientX - state.panStart.mx);
+    state.pan.y = state.panStart.panY + (e.clientY - state.panStart.my);
+    updateTransform();
+    return;
+  }
   
   if (state.drawing && state.startPoint) {
-    renderAnnotations(true, {x1: state.startPoint.x, y1: state.startPoint.y, x2: x, y2: y});
+    drawGhost(Math.min(state.startPoint.x, pt.x), Math.min(state.startPoint.y, pt.y),
+              Math.max(state.startPoint.x, pt.x), Math.max(state.startPoint.y, pt.y));
   }
 }
 
 function onMouseUp(e) {
+  if (state.panning) {
+    state.panning = false;
+    document.getElementById('canvas').classList.remove('panning');
+    return;
+  }
   if (!state.drawing || !state.startPoint) return;
-  const rect = document.getElementById('canvas').getBoundingClientRect();
-  const x = (e.clientX - rect.left - state.pan.x)/state.zoom;
-  const y = (e.clientY - rect.top - state.pan.y)/state.zoom;
+  const pt = imagePoint(e);
+  const x = pt.x, y = pt.y;
   
   const x1 = Math.min(state.startPoint.x, x);
   const y1 = Math.min(state.startPoint.y, y);
@@ -254,22 +323,33 @@ function onMouseUp(e) {
   
   state.drawing = false;
   state.startPoint = null;
+  drawGhost(null);
   renderAnnotations();
 }
 
 function onWheel(e) {
   e.preventDefault();
-  const delta = e.deltaY > 0 ? 0.9 : 1.1;
   const rect = document.getElementById('canvas').getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  const wx = (mx - state.pan.x)/state.zoom;
-  const wy = (my - state.pan.y)/state.zoom;
-  state.zoom *= delta;
-  state.zoom = Math.max(0.1, Math.min(10, state.zoom));
-  state.pan.x = mx - wx*state.zoom;
-  state.pan.y = my - wy*state.zoom;
-  updateTransform();
+  zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY > 0 ? 0.9 : 1.1);
+}
+
+function drawGhost(x1, y1, x2, y2) {
+  const svg = document.getElementById('svg');
+  let g = document.getElementById('ghostRect');
+  if (x1 == null) { if (g) g.remove(); return; }
+  if (!g) {
+    const ns = 'http://www.w3.org/2000/svg';
+    g = document.createElementNS(ns, 'rect');
+    g.id = 'ghostRect';
+    g.setAttribute('fill', 'rgba(108,92,255,0.2)');
+    g.setAttribute('stroke', '#6c5cff');
+    g.setAttribute('stroke-width', '2');
+    g.setAttribute('stroke-dasharray', '6 3');
+    svg.appendChild(g);
+  }
+  g.setAttribute('x', x1); g.setAttribute('y', y1);
+  g.setAttribute('width', Math.max(0, x2 - x1));
+  g.setAttribute('height', Math.max(0, y2 - y1));
 }
 
 function renderAnnotations(temp=false, tempBox=null) {
@@ -307,17 +387,6 @@ function renderAnnotations(temp=false, tempBox=null) {
     svg.appendChild(text);
   });
   
-  if (temp && tempBox) {
-    const {x1,y1,x2,y2} = tempBox;
-    const rect = document.createElementNS(ns, 'rect');
-    rect.setAttribute('x', x1); rect.setAttribute('y', y1);
-    rect.setAttribute('width', x2-x1); rect.setAttribute('height', y2-y1);
-    rect.setAttribute('fill', 'rgba(108,92,255,0.2)');
-    rect.setAttribute('stroke', '#6c5cff');
-    rect.setAttribute('stroke-width','2');
-    rect.setAttribute('stroke-dasharray','6 3');
-    svg.appendChild(rect);
-  }
 }
 
 function renderAnnList() {
@@ -357,16 +426,32 @@ function onKeyDown(e) {
       renderAnnotations();
       renderAnnList();
     }
+  } else if (e.key === 'Escape') {
+    state.selectedAnn = null;
+    renderAnnotations();
+    renderAnnList();
   } else if (e.key.toLowerCase() === 's' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     saveAnnotations();
+  } else if (e.key.toLowerCase() === 'h') {
+    setTool('hand', document.querySelector(".tool-btn[title^='Панорама']"));
+  } else if (e.key.toLowerCase() === 'd') {
+    setTool('draw', document.querySelector(".tool-btn[title^='Рисовать']"));
   }
 }
 
-function setTool(tool) {
+function setTool(tool, el) {
   state.tool = tool;
   document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
-  event.target.classList.add('active');
+  if (el) el.classList.add('active');
+  document.getElementById('canvas').classList.toggle('mode-hand', tool === 'hand');
+  if (tool === 'draw') {
+    document.getElementById('status').textContent = `Класс: ${GOST_CLASSES[state.currentClass].name} (${state.currentClass}) — тяните мышью, чтобы нарисовать бокс`;
+  } else if (tool === 'hand') {
+    document.getElementById('status').textContent = 'Панорама: тяните левой кнопкой (или средней — в любом режиме)';
+  } else {
+    document.getElementById('status').textContent = 'Выбор: кликните по боксу; Delete — удалить';
+  }
 }
 
 async function saveAnnotations() {
