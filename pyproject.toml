@@ -32,6 +32,7 @@ dependencies = [
     "scikit-image>=0.22.0",
     "Pillow>=10.0.0",
     "lxml>=4.9.0",
+    "tqdm>=4.66.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +47,36 @@ dev = [
 viz = [
     "matplotlib>=3.8.0",
     "plotly>=5.18.0",
+]
+web = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "python-multipart>=0.0.6",
+]
+ml = [
+    "ultralytics>=8.0.0",
+    "sahi>=0.11.0",
+    "paddleocr>=2.7.0",
+    "transformers>=4.35.0",
+    "torch>=2.1.0",
+    "faiss-cpu>=1.7.0",
+]
+rag = [
+    "transformers>=4.35.0",
+    "faiss-cpu>=1.7.0",
+    "sentence-transformers>=2.2.0",
+]
+dataset = [
+    "ultralytics>=8.0.0",
+]
+all = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "python-multipart>=0.0.6",
+    "ultralytics>=8.0.0",
+    "sahi>=0.11.0",
+    "transformers>=4.35.0",
+    "faiss-cpu>=1.7.0",
 ]
 
 [project.scripts]

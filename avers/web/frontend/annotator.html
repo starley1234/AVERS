@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>АВЕРС — Аннотатор ГОСТ УГО</title>
+<style>
+:root {
+  --bg:#0a0a0b; --bg2:#141416; --bg3:#1c1c1f; --bg4:#26262b;
+  --border:#2a2a30; --border2:#3a3a44;
+  --text:#e8e8ec; --text2:#9a9aa3; --accent:#6c5cff; --green:#22c55e; --red:#ef4444;
+}
+* {margin:0;padding:0;box-sizing:border-box}
+body {font-family: Inter, sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column}
+.header {height:56px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 20px; justify-content:space-between}
+.logo {display:flex; align-items:center; gap:10px; font-weight:700}
+.btn {height:32px; padding:0 14px; border-radius:8px; border:1px solid var(--border); background:var(--bg3); color:var(--text); font-size:13px; cursor:pointer; font-family:inherit}
+.btn-primary {background:var(--accent); border-color:var(--accent); color:white}
+.main {flex:1; display:flex; overflow:hidden}
+.sidebar {width:300px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden}
+.canvas-wrap {flex:1; display:flex; flex-direction:column; background:#08080a; position:relative}
+.canvas {flex:1; position:relative; overflow:hidden; cursor:crosshair}
+.canvas img {position:absolute; max-width:none; transform-origin:0 0}
+.toolbar {height:44px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 12px; gap:8px}
+.tool-btn {width:28px; height:28px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--text2); cursor:pointer}
+.tool-btn.active {background:var(--accent); color:white}
+.list {display:flex; flex-direction:column; gap:6px; padding:12px; overflow:auto; flex:1}
+.list-item {padding:8px 10px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; font-size:12px; cursor:pointer}
+.list-item.selected {border-color:var(--accent)}
+.class-item {display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer}
+.class-item:hover {background:var(--bg3)}
+.class-dot {width:10px; height:10px; border-radius:50%}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">✏️ АВЕРС Аннотатор · ГОСТ УГО</div>
+  <div style="display:flex; gap:8px">
+    <button class="btn" onclick="location.href='/'">← Валидатор</button>
+    <button class="btn" onclick="exportDataset()">💾 Экспорт YOLO</button>
+    <button class="btn btn-primary" onclick="saveAnnotations()">Сохранить</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="sidebar">
+    <div style="padding:12px; border-bottom:1px solid var(--border)">
+      <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600; margin-bottom:8px">Классы ГОСТ</div>
+      <div id="classList"></div>
+    </div>
+    <div style="flex:1; overflow:auto">
+      <div style="padding:12px; font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600">Изображения</div>
+      <div class="list" id="imageList"></div>
+    </div>
+    <div style="padding:12px; border-top:1px solid var(--border)">
+      <div style="font-size:11px; color:var(--text2); margin-bottom:6px">Горячие клавиши</div>
+      <div style="font-size:10px; color:var(--text2); line-height:1.6">
+        <b>1-9</b> выбор класса<br>
+        <b>Del</b> удалить бокс<br>
+        <b>S</b> сохранить<br>
+        <b>Drag</b> нарисовать бокс
+      </div>
+    </div>
+  </div>
+
+  <div class="canvas-wrap">
+    <div class="toolbar">
+      <button class="tool-btn active" title="Select" onclick="setTool('select')">◈</button>
+      <button class="tool-btn" title="Draw bbox" onclick="setTool('draw')">✏️</button>
+      <span style="font-size:11px; color:var(--text2); margin-left:12px" id="status">Выберите изображение</span>
+      <span style="margin-left:auto; font-size:11px; color:var(--text2)" id="coords">—</span>
+    </div>
+    <div class="canvas" id="canvas">
+      <img id="canvasImg" style="display:none">
+      <svg id="svg" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none"></svg>
+      <div id="empty" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:13px">Загрузите изображение или выберите из списка</div>
+    </div>
+  </div>
+
+  <div class="sidebar" style="width:320px; border-right:none; border-left:1px solid var(--border)">
+    <div style="padding:12px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center">
+      <div style="font-size:11px; color:var(--text2); text-transform:uppercase; font-weight:600">Аннотации</div>
+      <span id="annCount" style="font-size:11px; background:var(--bg3); padding:2px 8px; border-radius:100px">0</span>
+    </div>
+    <div class="list" id="annList"></div>
+    <div style="padding:12px; border-top:1px solid var(--border)">
+      <input type="file" id="fileInput" hidden accept=".jpg,.png,.tif" onchange="uploadImage(event)">
+      <button class="btn" style="width:100%; justify-content:center" onclick="document.getElementById('fileInput').click()">📁 Загрузить изображение</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let state = {
+  images: [],
+  currentImage: null,
+  currentClass: 0,
+  tool: 'draw',
+  annotations: [],
+  selectedAnn: null,
+  drawing: false,
+  startPoint: null,
+  zoom: 1,
+  pan: {x:0,y:0},
+  classColors: {}
+};
+
+const GOST_CLASSES = {
+  0: {name:'connector_body', color:'#22c55e', gost:'ГОСТ 2.755'},
+  1: {name:'pin', color:'#eab308', gost:'ГОСТ 2.755'},
+  2: {name:'junction_dot', color:'#ef4444', gost:'ГОСТ 2.721'},
+  3: {name:'ground', color:'#3b82f6', gost:'ГОСТ 2.721'},
+  4: {name:'shield', color:'#8b5cf6', gost:'ГОСТ 2.721'},
+  5: {name:'offpage_connector', color:'#ec4899', gost:'ГОСТ 2.721'},
+  6: {name:'diode', color:'#f97316', gost:'ГОСТ 2.730'},
+  7: {name:'relay', color:'#06b6d4', gost:'ГОСТ 2.756'},
+  8: {name:'resistor', color:'#84cc16', gost:'ГОСТ 2.728'},
+};
+
+function init() {
+  const classList = document.getElementById('classList');
+  classList.innerHTML = Object.entries(GOST_CLASSES).map(([id, cls])=>`
+    <div class="class-item" data-id="${id}" onclick="selectClass(${id})">
+      <div class="class-dot" style="background:${cls.color}"></div>
+      <div style="flex:1"><div style="font-size:12px; font-weight:500">${cls.name}</div><div style="font-size:10px; color:var(--text2)">${cls.gost}</div></div>
+      <div style="font-size:10px; background:var(--bg3); padding:2px 6px; border-radius:4px">${id}</div>
+    </div>
+  `).join('');
+  selectClass(0);
+  loadImages();
+  
+  // Canvas events
+  const canvas = document.getElementById('canvas');
+  canvas.addEventListener('mousedown', onMouseDown);
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('wheel', onWheel);
+  
+  // Keyboard
+  window.addEventListener('keydown', onKeyDown);
+}
+
+function selectClass(id) {
+  state.currentClass = parseInt(id);
+  document.querySelectorAll('.class-item').forEach(el=>el.style.background = '');
+  document.querySelector(`.class-item[data-id="${id}"]`).style.background = 'var(--bg3)';
+  document.getElementById('status').textContent = `Класс: ${GOST_CLASSES[id].name} (${id}) — рисуйте бокс`;
+}
+
+async function loadImages() {
+  try {
+    const res = await fetch('/api/annotator/images');
+    const images = await res.json();
+    state.images = images;
+    renderImageList();
+  } catch(e) { console.error(e); }
+}
+
+function renderImageList() {
+  const el = document.getElementById('imageList');
+  if (!state.images.length) {
+    el.innerHTML = '<div style="padding:12px; font-size:12px; color:var(--text2)">Нет изображений</div>';
+    return;
+  }
+  el.innerHTML = state.images.map(img=>`
+    <div class="list-item ${state.currentImage?.id===img.id?'selected':''}" onclick="loadImage('${img.id}')">
+      <div style="font-weight:500">${img.file_name}</div>
+      <div style="font-size:10px; color:var(--text2)">${img.width}×${img.height} · ${img.annotations.length} аннотаций ${img.annotated?'✓':''}</div>
+    </div>
+  `).join('');
+}
+
+async function loadImage(imageId) {
+  try {
+    const res = await fetch(`/api/annotator/images/${imageId}`);
+    const img = await res.json();
+    state.currentImage = img;
+    state.annotations = img.annotations.map(a=>({...a, id: Math.random().toString(36).substr(2,9)}));
+    state.selectedAnn = null;
+    
+    const canvasImg = document.getElementById('canvasImg');
+    canvasImg.src = `/api/annotator/image-file/${imageId}`;
+    canvasImg.style.display = 'block';
+    document.getElementById('empty').style.display = 'none';
+    
+    canvasImg.onload = () => {
+      fitView();
+      renderAnnotations();
+    };
+    
+    renderImageList();
+    renderAnnList();
+    document.getElementById('status').textContent = `Загружено: ${img.file_name} — ${img.annotations.length} аннотаций`;
+  } catch(e) { console.error(e); }
+}
+
+function fitView() {
+  const canvas = document.getElementById('canvas');
+  const img = document.getElementById('canvasImg');
+  const rect = canvas.getBoundingClientRect();
+  const scale = Math.min((rect.width-40)/img.naturalWidth, (rect.height-40)/img.naturalHeight);
+  state.zoom = scale;
+  state.pan = {x:(rect.width - img.naturalWidth*scale)/2, y:(rect.height - img.naturalHeight*scale)/2};
+  updateTransform();
+}
+
+function updateTransform() {
+  const img = document.getElementById('canvasImg');
+  img.style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
+  document.getElementById('svg').style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
+}
+
+function onMouseDown(e) {
+  if (state.tool !== 'draw' || !state.currentImage) return;
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  const x = (e.clientX - rect.left - state.pan.x)/state.zoom;
+  const y = (e.clientY - rect.top - state.pan.y)/state.zoom;
+  state.drawing = true;
+  state.startPoint = {x, y};
+}
+
+function onMouseMove(e) {
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  const x = (e.clientX - rect.left - state.pan.x)/state.zoom;
+  const y = (e.clientY - rect.top - state.pan.y)/state.zoom;
+  document.getElementById('coords').textContent = `${Math.round(x)}, ${Math.round(y)}`;
+  
+  if (state.drawing && state.startPoint) {
+    renderAnnotations(true, {x1: state.startPoint.x, y1: state.startPoint.y, x2: x, y2: y});
+  }
+}
+
+function onMouseUp(e) {
+  if (!state.drawing || !state.startPoint) return;
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  const x = (e.clientX - rect.left - state.pan.x)/state.zoom;
+  const y = (e.clientY - rect.top - state.pan.y)/state.zoom;
+  
+  const x1 = Math.min(state.startPoint.x, x);
+  const y1 = Math.min(state.startPoint.y, y);
+  const x2 = Math.max(state.startPoint.x, x);
+  const y2 = Math.max(state.startPoint.y, y);
+  
+  if (Math.abs(x2-x1) > 5 && Math.abs(y2-y1) > 5) {
+    const ann = {
+      id: Math.random().toString(36).substr(2,9),
+      class_id: state.currentClass,
+      class_name: GOST_CLASSES[state.currentClass].name,
+      bbox: [Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2)]
+    };
+    state.annotations.push(ann);
+    renderAnnList();
+  }
+  
+  state.drawing = false;
+  state.startPoint = null;
+  renderAnnotations();
+}
+
+function onWheel(e) {
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const wx = (mx - state.pan.x)/state.zoom;
+  const wy = (my - state.pan.y)/state.zoom;
+  state.zoom *= delta;
+  state.zoom = Math.max(0.1, Math.min(10, state.zoom));
+  state.pan.x = mx - wx*state.zoom;
+  state.pan.y = my - wy*state.zoom;
+  updateTransform();
+}
+
+function renderAnnotations(temp=false, tempBox=null) {
+  const svg = document.getElementById('svg');
+  const img = document.getElementById('canvasImg');
+  if (!img.naturalWidth) return;
+  
+  svg.setAttribute('viewBox', `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+  svg.setAttribute('width', img.naturalWidth);
+  svg.setAttribute('height', img.naturalHeight);
+  svg.innerHTML = '';
+  
+  const ns = 'http://www.w3.org/2000/svg';
+  
+  state.annotations.forEach(ann=>{
+    const [x1,y1,x2,y2] = ann.bbox;
+    const color = GOST_CLASSES[ann.class_id]?.color || '#fff';
+    const isSelected = state.selectedAnn?.id === ann.id;
+    
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', x1); rect.setAttribute('y', y1);
+    rect.setAttribute('width', x2-x1); rect.setAttribute('height', y2-y1);
+    rect.setAttribute('fill', isSelected ? color+'40' : 'transparent');
+    rect.setAttribute('stroke', color);
+    rect.setAttribute('stroke-width', isSelected ? '3' : '2');
+    rect.style.pointerEvents = 'auto';
+    rect.style.cursor = 'pointer';
+    rect.onclick = ()=>{ state.selectedAnn = ann; renderAnnotations(); renderAnnList(); };
+    svg.appendChild(rect);
+    
+    const text = document.createElementNS(ns, 'text');
+    text.setAttribute('x', x1); text.setAttribute('y', y1-4);
+    text.setAttribute('fill', color); text.setAttribute('font-size','12'); text.setAttribute('font-weight','600');
+    text.textContent = `${ann.class_name}`;
+    svg.appendChild(text);
+  });
+  
+  if (temp && tempBox) {
+    const {x1,y1,x2,y2} = tempBox;
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', x1); rect.setAttribute('y', y1);
+    rect.setAttribute('width', x2-x1); rect.setAttribute('height', y2-y1);
+    rect.setAttribute('fill', 'rgba(108,92,255,0.2)');
+    rect.setAttribute('stroke', '#6c5cff');
+    rect.setAttribute('stroke-width','2');
+    rect.setAttribute('stroke-dasharray','6 3');
+    svg.appendChild(rect);
+  }
+}
+
+function renderAnnList() {
+  const el = document.getElementById('annList');
+  document.getElementById('annCount').textContent = state.annotations.length;
+  
+  if (!state.annotations.length) {
+    el.innerHTML = '<div style="padding:12px; font-size:12px; color:var(--text2)">Нет аннотаций — рисуйте боксы на изображении</div>';
+    return;
+  }
+  
+  el.innerHTML = state.annotations.map(ann=>`
+    <div class="list-item ${state.selectedAnn?.id===ann.id?'selected':''}" onclick="selectAnn('${ann.id}')">
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <span style="font-weight:500; color:${GOST_CLASSES[ann.class_id]?.color}">${ann.class_name}</span>
+        <span style="font-size:10px; background:var(--bg4); padding:2px 6px; border-radius:4px">${ann.class_id}</span>
+      </div>
+      <div style="font-size:10px; color:var(--text2); margin-top:4px">${ann.bbox.join(', ')}</div>
+    </div>
+  `).join('');
+}
+
+function selectAnn(id) {
+  state.selectedAnn = state.annotations.find(a=>a.id===id);
+  renderAnnotations();
+  renderAnnList();
+}
+
+function onKeyDown(e) {
+  if (e.key >= '1' && e.key <= '9') {
+    const id = parseInt(e.key)-1;
+    if (GOST_CLASSES[id]) selectClass(id);
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (state.selectedAnn) {
+      state.annotations = state.annotations.filter(a=>a.id!==state.selectedAnn.id);
+      state.selectedAnn = null;
+      renderAnnotations();
+      renderAnnList();
+    }
+  } else if (e.key.toLowerCase() === 's' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    saveAnnotations();
+  }
+}
+
+function setTool(tool) {
+  state.tool = tool;
+  document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+async function saveAnnotations() {
+  if (!state.currentImage) return;
+  
+  const payload = {
+    annotations: state.annotations.map(a=>({class_id: a.class_id, class_name: a.class_name, bbox: a.bbox}))
+  };
+  
+  try {
+    const res = await fetch(`/api/annotator/images/${state.currentImage.id}/annotations`, {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    document.getElementById('status').textContent = `Сохранено: ${data.annotations.length} аннотаций`;
+    loadImages();
+  } catch(e) { console.error(e); }
+}
+
+async function uploadImage(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  const fd = new FormData();
+  fd.append('file', file);
+  
+  try {
+    const res = await fetch('/api/annotator/upload', {method:'POST', body:fd});
+    const data = await res.json();
+    loadImages();
+    setTimeout(()=>loadImage(data.id), 500);
+  } catch(e) { console.error(e); }
+}
+
+async function exportDataset() {
+  try {
+    const res = await fetch('/api/annotator/export', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({output_dir:'/tmp/avers_dataset_export', split_ratio:0.8})
+    });
+    const data = await res.json();
+    alert(`Экспортировано в ${data.output_dir}\nYAML: ${data.yaml_path}\nИзображений: ${data.images}`);
+  } catch(e) { console.error(e); alert('Ошибка экспорта: '+e); }
+}
+
+init();
+</script>
+</body>
+</html>

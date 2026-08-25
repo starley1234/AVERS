@@ -123,10 +123,59 @@ class OutputConfig(BaseModel):
     output_dir: Optional[str] = Field(default=None, description="Default output directory")
 
 
+class VisionRAGConfig(BaseModel):
+    """Vision RAG configuration."""
+    enabled: bool = Field(default=True, description="Enable Vision RAG")
+    embedding_model: str = Field(default="openai/clip-vit-base-patch32", description="CLIP model")
+    vector_store: str = Field(default="faiss", description="Vector store type")
+    top_k: int = Field(default=5, description="Top-K examples")
+    use_few_shot: bool = Field(default=True, description="Use few-shot in VLM")
+    storage_path: str = Field(default="/tmp/avers_rag", description="RAG storage path")
+    min_similarity: float = Field(default=0.3, ge=0.0, le=1.0)
+
+
+class DatasetConfig(BaseModel):
+    """Dataset generation configuration."""
+    output_dir: str = Field(default="/tmp/avers_dataset")
+    image_size: int = Field(default=1024)
+    num_train: int = Field(default=1000)
+    num_val: int = Field(default=200)
+    num_test: int = Field(default=100)
+    classes: List[str] = Field(default_factory=lambda: [
+        "connector_body", "pin", "junction_dot", "ground", "diode", "resistor"
+    ])
+    enable_wires: bool = Field(default=True)
+    enable_text: bool = Field(default=True)
+    enable_scan_effects: bool = Field(default=True)
+    enable_noise: bool = Field(default=True)
+
+
+class TrainingConfig(BaseModel):
+    """Training configuration."""
+    model_type: str = Field(default="rtdetr-l")
+    epochs: int = Field(default=100)
+    batch_size: int = Field(default=8)
+    img_size: int = Field(default=640)
+    device: str = Field(default="cuda")
+    project: str = Field(default="/tmp/avers_runs")
+    pretrained: Optional[str] = Field(default=None)
+
+
+class WebConfig(BaseModel):
+    """Web UI configuration."""
+    host: str = Field(default="0.0.0.0")
+    port: int = Field(default=8000)
+    reload: bool = Field(default=False)
+    workers: int = Field(default=1)
+    upload_dir: str = Field(default="/tmp/avers_uploads")
+    results_dir: str = Field(default="/tmp/avers_results")
+    max_file_size_mb: int = Field(default=50)
+
+
 class AVERSConfig(BaseModel):
     """Complete AVERS configuration."""
     project_name: str = Field(default="AVERS")
-    version: str = Field(default="0.1.0")
+    version: str = Field(default="0.2.0")
 
     # Stage configurations
     slicing: SlicingConfig = Field(default_factory=SlicingConfig)
@@ -136,6 +185,12 @@ class AVERSConfig(BaseModel):
     graph_synthesis: GraphSynthesisConfig = Field(default_factory=GraphSynthesisConfig)
     vlm_arbitrator: VLMArbitratorConfig = Field(default_factory=VLMArbitratorConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+
+    # New in v0.2
+    vision_rag: VisionRAGConfig = Field(default_factory=VisionRAGConfig)
+    dataset: DatasetConfig = Field(default_factory=DatasetConfig)
+    training: TrainingConfig = Field(default_factory=TrainingConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
 
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")

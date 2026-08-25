@@ -1,8 +1,9 @@
 # AVERS Configuration Template
 # Copy and customize for your needs
+# v0.2.0 - with Web UI, Dataset, Vision RAG
 
 project_name: AVERS
-version: "0.1.0"
+version: "0.2.0"
 
 # Logging
 log_level: INFO
@@ -63,6 +64,58 @@ vlm_arbitrator:
   roi_size: 256                # ROI crop size
   confidence_threshold: 0.65   # Min confidence to trigger VLM
   max_vlm_calls: 50            # Cost control
+
+# Vision RAG (NEW in v0.2)
+vision_rag:
+  enabled: true
+  embedding_model: openai/clip-vit-base-patch32
+  vector_store: faiss          # 'faiss' or 'memory'
+  top_k: 5                     # Number of examples to retrieve
+  use_few_shot: true           # Use examples in VLM prompt
+  storage_path: /tmp/avers_rag
+  min_similarity: 0.3          # Min similarity to use example
+
+# Dataset Generation (NEW in v0.2)
+dataset:
+  output_dir: /tmp/avers_dataset
+  image_size: 1024
+  num_train: 1000
+  num_val: 200
+  num_test: 100
+  classes:
+    - connector_body
+    - pin
+    - junction_dot
+    - ground
+    - shield
+    - offpage_connector
+    - diode
+    - relay
+    - resistor
+  enable_wires: true
+  enable_text: true
+  enable_scan_effects: true
+  enable_noise: true
+
+# Training (NEW in v0.2)
+training:
+  model_type: rtdetr-l         # 'yolo11x', 'yolo11m', 'rtdetr-l', 'rtdetr-x'
+  epochs: 100
+  batch_size: 8
+  img_size: 640
+  device: cuda
+  project: /tmp/avers_runs
+  pretrained: null             # Path to pretrained weights
+
+# Web UI (NEW in v0.2)
+web:
+  host: 0.0.0.0
+  port: 8000
+  reload: false
+  workers: 1
+  upload_dir: /tmp/avers_uploads
+  results_dir: /tmp/avers_results
+  max_file_size_mb: 50
 
 # Output Format
 output:
