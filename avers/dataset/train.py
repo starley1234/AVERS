@@ -135,12 +135,23 @@ def train_yolo(
         **config
     )
     
-    logger.info(f"Training complete. Best model: {results}")
-    
-    # Экспорт в ONNX
     try:
+        rd = getattr(results, "results_dict", None)
+        if rd:
+            pretty = {k: round(float(v), 4) for k, v in rd.items() if isinstance(v, (int, float))}
+            logger.info(f"Training complete. Metrics: {pretty}")
+        else:
+            logger.info("Training complete")
+    except Exception:
+        logger.info("Training complete")
+    
+    # Экспорт в ONNX (best.pt уже сохранён и полностью рабочий и без него)
+    try:
+        import onnx  # noqa: F401
         model.export(format="onnx", dynamic=True)
         logger.info("Exported to ONNX")
+    except ImportError:
+        logger.warning("ONNX export skipped (нет пакета onnx): pip install onnx onnxruntime onnxslim")
     except Exception as e:
         logger.warning(f"ONNX export failed: {e}")
     
@@ -188,12 +199,23 @@ def train_rtdetr(
         **config
     )
     
-    logger.info(f"Training complete. Best model: {results}")
-    
-    # Экспорт
     try:
+        rd = getattr(results, "results_dict", None)
+        if rd:
+            pretty = {k: round(float(v), 4) for k, v in rd.items() if isinstance(v, (int, float))}
+            logger.info(f"Training complete. Metrics: {pretty}")
+        else:
+            logger.info("Training complete")
+    except Exception:
+        logger.info("Training complete")
+    
+    # Экспорт в ONNX (best.pt уже сохранён и полностью рабочий и без него)
+    try:
+        import onnx  # noqa: F401
         model.export(format="onnx", dynamic=True)
         logger.info("Exported to ONNX")
+    except ImportError:
+        logger.warning("ONNX export skipped (нет пакета onnx): pip install onnx onnxruntime onnxslim")
     except Exception as e:
         logger.warning(f"ONNX export failed: {e}")
     

@@ -18,7 +18,8 @@ slicing:
 
 # Stage 2: Object Detection (RT-DETR/YOLO)
 detection:
-  model_path: null             # Path to model weights (null = download default)
+  model_path: null             # Веса ОБУЧЕННОЙ модели, напр. /tmp/avers_runs/avers_yolo/weights/best.pt
+                               # (null = COCO-модель по умолчанию - на ГОСТ УГО она НЕ обучена, будут предупреждения)
   model_type: yolo              # 'yolo' or 'rtdetr'
   model_name: yolov11x
   confidence_threshold: 0.25

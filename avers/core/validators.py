@@ -85,7 +85,8 @@ class SlicedDetector:
         self._sahi = get_sahi_integration()
         self._model = None
         self._loaded = False
-        # 'sahi' (реальная модель) или 'mock' (заглушка по контурам)
+        self._yolo_detector = None  # для бэкенда 'ultralytics' (без SAHI)
+        # 'sahi' | 'ultralytics' (реальная модель) | 'mock' (заглушка по контурам)
         self.backend: Optional[str] = None
 
     def load(self) -> bool:
@@ -96,10 +97,14 @@ class SlicedDetector:
         try:
             if self._sahi is not None:
                 return self._load_sahi_model()
-            else:
-                return self._load_fallback_model()
         except Exception as e:
-            logger.warning(f"Failed to load SAHI model: {e}, using fallback")
+            logger.warning(f"Failed to load SAHI model: {e}")
+
+        # SAHI недоступен или упал - пробуем ultralytics напрямую (тайлы своими силами)
+        try:
+            return self._load_ultralytics_model()
+        except Exception as e:
+            logger.warning(f"Direct ultralytics load failed: {e}, using contour fallback")
             return self._load_fallback_model()
     
     def _load_sahi_model(self) -> bool:
@@ -139,6 +144,52 @@ class SlicedDetector:
         logger.info(f"SAHI model loaded: {self.model_type}")
         return True
     
+    def _load_ultralytics_model(self) -> bool:
+        """Загрузить YOLO/RT-DETR через ultralytics напрямую (без SAHI).
+
+        Тайлинг больших изображений выполняется внутренним SlicingEngine.
+        Требует заданных весов: без model_path COCO-модель для ГОСТ бесполезна,
+        поэтому падаем в mock с честным предупреждением.
+        """
+        if not (self.model_path and Path(self.model_path).exists()):
+            raise FileNotFoundError(
+                f"Веса модели не найдены: {self.model_path} - "
+                f"обучите модель (python -m avers dataset train) и укажите "
+                f"detection.model_path в config.yaml"
+            )
+        from avers.stages.stage2_detection.detector import YOLODetector, DetectionConfig
+
+        device = self.device if self.device in ("cpu", "cuda") else "cpu"
+        cfg = DetectionConfig(
+            model_path=self.model_path,
+            confidence_threshold=self.confidence_threshold,
+            device=device,
+            img_size=640,
+        )
+        self._yolo_detector = YOLODetector(cfg)
+        if not self._yolo_detector.load():
+            raise RuntimeError("YOLO detector failed to load")
+        self._loaded = True
+        self.backend = "ultralytics"
+        logger.info(f"ultralytics model loaded (без SAHI): {self.model_path}")
+        return True
+
+    def _ultralytics_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
+        """Тайловая детекция через ultralytics (SAHI не требуется)."""
+        from avers.stages.stage2_detection.detector import SlicingDetector as TiledDetector
+
+        tiled = TiledDetector(detector=self._yolo_detector, nms_threshold=0.45)
+        boxes = tiled.detect_in_tiles(image)
+        return [
+            {
+                "bbox": (int(b.x_min), int(b.y_min), int(b.x_max), int(b.y_max)),
+                "confidence": float(b.confidence),
+                "category": b.class_name,
+                "category_id": int(b.class_id),
+            }
+            for b in boxes
+        ]
+
     def _load_fallback_model(self) -> bool:
         """Load fallback model (mock detection)."""
         logger.info("Using fallback detector (mock mode)")
@@ -159,10 +210,15 @@ class SlicedDetector:
         if not self._loaded:
             self.load()
         
-        if self._sahi is not None and hasattr(self, "_sliced_inference"):
-            return self._sahi_detect(image)
-        else:
-            return self._fallback_detect(image)
+        try:
+            if self.backend == "sahi" and hasattr(self, "_sliced_inference"):
+                return self._sahi_detect(image)
+            if self.backend == "ultralytics":
+                return self._ultralytics_detect(image)
+        except Exception as e:
+            logger.error(f"Model detection failed: {e}, falling back to contours")
+        
+        return self._fallback_detect(image)
     
     def _sahi_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """SAHI detection."""
@@ -655,6 +711,8 @@ class ProductionPipeline:
             overlap_ratio=self.config.slicing.overlap_ratio,
         )
         detector.load()
+        logger.info(f"Стадия 2: бэкенд детекции = {detector.backend} "
+                    f"(model_path={self.config.detection.model_path or 'не задан'})")
         detections = detector.detect(image)
         bboxes = [d["bbox"] for d in detections]
 
