@@ -74,6 +74,7 @@ class SlicedDetector:
         device: str = "cpu",
         slice_size: int = 1024,
         overlap_ratio: float = 0.2,
+        img_size: int = 640,
     ):
         self.model_path = model_path
         self.model_type = model_type
@@ -81,6 +82,7 @@ class SlicedDetector:
         self.device = device
         self.slice_size = slice_size
         self.overlap_ratio = overlap_ratio
+        self.img_size = img_size
         
         self._sahi = get_sahi_integration()
         self._model = None
@@ -164,7 +166,7 @@ class SlicedDetector:
             model_path=self.model_path,
             confidence_threshold=self.confidence_threshold,
             device=device,
-            img_size=self.config.detection.img_size,
+            img_size=self.img_size,
         )
         self._yolo_detector = YOLODetector(cfg)
         if not self._yolo_detector.load():
@@ -744,6 +746,7 @@ class ProductionPipeline:
             device=self.config.detection.device,
             slice_size=self.config.slicing.tile_size,
             overlap_ratio=self.config.slicing.overlap_ratio,
+            img_size=self.config.detection.img_size,
         )
         detector.load()
         logger.info(f"Стадия 2: бэкенд детекции = {detector.backend} "
