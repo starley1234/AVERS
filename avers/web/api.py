@@ -348,9 +348,18 @@ async def update_component(file_id: str, comp_id: str, edit: ComponentEditReques
 
 @router.post("/issues/{file_id}/{issue_idx}/resolve")
 async def resolve_issue(file_id: str, issue_idx: int, req: IssueResolutionRequest):
-    """Resolve human review issue."""
+    """Resolve human review issue with Active Learning + RAG integration."""
     if file_id not in manifests_db:
-        raise HTTPException(404, "Manifest not found")
+        # Try load from disk
+        result_path = RESULTS_DIR / f"{file_id}.json"
+        if result_path.exists():
+            with open(result_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            from avers.core.types import AVERSManifest
+            manifest = AVERSManifest(**data)
+            manifests_db[file_id] = manifest
+        else:
+            raise HTTPException(404, "Manifest not found")
     
     manifest = manifests_db[file_id]
     
@@ -369,7 +378,134 @@ async def resolve_issue(file_id: str, issue_idx: int, req: IssueResolutionReques
     result_path = RESULTS_DIR / f"{file_id}.json"
     manifest.save(result_path)
     
+    # Active Learning + RAG integration
+    try:
+        from avers.active_learning.loop import get_active_learning_loop
+        from avers.rag import get_rag
+        
+        loop = get_active_learning_loop()
+        
+        # Extract ROI for feedback
+        file_info = files_db.get(file_id)
+        if file_info and Path(file_info["path"]).exists():
+            pil_img = Image.open(file_info["path"])
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            image = np.array(pil_img)
+            
+            x1, y1, x2, y2 = issue.bbox
+            # Expand bbox for context
+            h, w = image.shape[:2]
+            cx, cy = (x1+x2)//2, (y1+y2)//2
+            roi_size = 256
+            x1_roi = max(0, cx - roi_size//2)
+            y1_roi = max(0, cy - roi_size//2)
+            x2_roi = min(w, cx + roi_size//2)
+            y2_roi = min(h, cy + roi_size//2)
+            roi = image[y1_roi:y2_roi, x1_roi:x2_roi]
+            
+            if roi.size > 0:
+                # Determine corrected label
+                corrected_label = "junction_dot_connected" if req.connected else "junction_dot_none"
+                if req.corrected_text:
+                    corrected_label = f"text_{req.corrected_text}"
+                elif req.resolution:
+                    corrected_label = req.resolution[:50]
+                
+                # Add to active learning loop (auto-indexes in RAG)
+                loop.add_feedback(
+                    file_id=file_id,
+                    bbox=issue.bbox,
+                    original_label=issue.issue_type.value if hasattr(issue.issue_type, 'value') else str(issue.issue_type),
+                    corrected_label=corrected_label,
+                    issue_type=issue.issue_type.value if hasattr(issue.issue_type, 'value') else str(issue.issue_type),
+                    original_bbox=issue.bbox,
+                    corrected_bbox=req.corrected_bbox or issue.bbox,
+                    image_crop=roi,
+                    user_id="validator_ui",
+                    comment=req.resolution or f"Resolved: connected={req.connected}, text={req.corrected_text}"
+                )
+                
+                # Also add to RAG store directly for backward compat
+                try:
+                    rag = get_rag()
+                    rag.add_example(
+                        image=roi,
+                        label=corrected_label,
+                        bbox=req.corrected_bbox or issue.bbox,
+                        description=req.resolution or issue.description,
+                        metadata={"feedback": True, "file_id": file_id, "issue_idx": issue_idx}
+                    )
+                except Exception:
+                    pass
+                
+                # Check if should retrain
+                if loop.should_retrain():
+                    # Don't auto-trigger heavy training, just log
+                    import logging
+                    logging.getLogger("avers.web").info(f"Active learning threshold reached: {len(loop.feedback_entries)} samples, consider retraining")
+    
+    except Exception as e:
+        # Don't fail the request if active learning fails
+        import logging
+        logging.getLogger("avers.web").warning(f"Active learning feedback failed: {e}")
+    
     return issue.model_dump()
+
+
+@router.get("/active-learning/stats")
+async def get_active_learning_stats():
+    """Get active learning stats."""
+    try:
+        from avers.active_learning.loop import get_active_learning_loop
+        loop = get_active_learning_loop()
+        stats = loop.get_correction_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get stats: {e}")
+
+
+@router.post("/active-learning/retrain")
+async def trigger_active_learning_retrain(
+    background_tasks: BackgroundTasks,
+    model_type: str = Query("rtdetr-l"),
+    epochs: int = Query(20),
+):
+    """Trigger retraining from feedback."""
+    try:
+        from avers.active_learning.loop import get_active_learning_loop
+        loop = get_active_learning_loop()
+        
+        if not loop.should_retrain(threshold=1):
+            return {"status": "no_data", "message": "Not enough feedback samples"}
+        
+        # Run in background
+        def retrain_task():
+            loop.trigger_retraining(model_type=model_type, epochs=epochs)
+        
+        background_tasks.add_task(retrain_task)
+        
+        return {
+            "status": "started",
+            "feedback_samples": len(loop.feedback_entries),
+            "model_type": model_type,
+            "epochs": epochs,
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Retrain failed: {e}")
+
+
+@router.delete("/active-learning/clear")
+async def clear_active_learning():
+    """Clear feedback."""
+    try:
+        from avers.active_learning.loop import get_active_learning_loop
+        loop = get_active_learning_loop()
+        count = len(loop.feedback_entries)
+        loop.clear()
+        return {"status": "cleared", "cleared_count": count}
+    except Exception as e:
+        raise HTTPException(500, f"Clear failed: {e}")
 
 
 @router.get("/export/{file_id}")
@@ -409,16 +545,24 @@ async def get_detection_classes():
     return DETECTION_CLASSES
 
 
-# RAG endpoints will be added via separate router
+# RAG endpoints - now using real VisionRAG
 rag_router = APIRouter(prefix="/api/rag")
 
-# Simple in-memory RAG store
+# Simple in-memory RAG store for backward compat
 rag_store: List[dict] = []
+
+def _get_vision_rag():
+    """Get VisionRAG instance."""
+    try:
+        from avers.rag import get_rag
+        return get_rag()
+    except Exception:
+        return None
 
 
 @rag_router.post("/index")
 async def rag_index(req: RAGIndexRequest):
-    """Add example to RAG store."""
+    """Add example to RAG store (real VisionRAG + backward compat)."""
     item_id = _generate_id()
     
     # Decode image
@@ -426,16 +570,38 @@ async def rag_index(req: RAGIndexRequest):
         img_data = base64.b64decode(req.image_base64.split(",")[-1])
         nparr = np.frombuffer(img_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is not None:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     except Exception as e:
         raise HTTPException(400, f"Invalid image: {e}")
     
-    # Save crop
-    x1, y1, x2, y2 = req.bbox
-    crop = img[y1:y2, x1:x2] if img is not None else None
+    # Try real VisionRAG
+    rag = _get_vision_rag()
+    if rag and img is not None:
+        try:
+            real_id = rag.add_example(
+                image=img,
+                label=req.label,
+                bbox=req.bbox,
+                description=req.description,
+                metadata=req.metadata,
+            )
+            # Also keep in simple store
+            entry = {
+                "id": real_id,
+                "label": req.label,
+                "bbox": req.bbox,
+                "description": req.description,
+                "metadata": req.metadata,
+                "created_at": datetime.now().isoformat(),
+            }
+            rag_store.append(entry)
+            return {"id": real_id, "status": "indexed", "backend": "vision_rag"}
+        except Exception as e:
+            # Fallback to simple
+            pass
     
-    # Simple embedding: use histogram or CLIP later
-    # For now, store metadata
-    
+    # Fallback simple store
     entry = {
         "id": item_id,
         "label": req.label,
@@ -444,20 +610,62 @@ async def rag_index(req: RAGIndexRequest):
         "metadata": req.metadata,
         "created_at": datetime.now().isoformat(),
     }
-    
     rag_store.append(entry)
     
-    return {"id": item_id, "status": "indexed"}
+    return {"id": item_id, "status": "indexed", "backend": "simple"}
 
 
 @rag_router.post("/query", response_model=RAGQueryResponse)
 async def rag_query(req: RAGQueryRequest):
-    """Query RAG store."""
+    """Query RAG store - tries real VisionRAG first."""
     start = time.time()
     
-    # Simple text matching for now
-    # In production: use CLIP embeddings + vector DB
+    # Try real VisionRAG
+    rag = _get_vision_rag()
+    if rag:
+        try:
+            # Decode image if provided
+            query_image = None
+            if req.image_base64:
+                try:
+                    img_data = base64.b64decode(req.image_base64.split(",")[-1])
+                    nparr = np.frombuffer(img_data, np.uint8)
+                    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        query_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                except Exception:
+                    pass
+            
+            response = rag.query(
+                image=query_image,
+                text=req.text_query,
+                top_k=req.top_k,
+                use_vlm=req.use_vlm,
+            )
+            
+            # Convert to API model
+            results = []
+            for r in response.results:
+                results.append(RAGResult(
+                    id=r.entry.id,
+                    label=r.entry.label,
+                    score=r.score,
+                    bbox=r.entry.bbox,
+                    description=r.entry.description,
+                    metadata=r.entry.metadata,
+                ))
+            
+            return RAGQueryResponse(
+                query=req.text_query or "",
+                results=results,
+                vlm_answer=response.vlm_answer,
+                processing_time_ms=(time.time() - start) * 1000
+            )
+        except Exception as e:
+            # Fallback to simple
+            pass
     
+    # Fallback simple text matching
     results = []
     query_lower = (req.text_query or "").lower()
     
@@ -483,18 +691,17 @@ async def rag_query(req: RAGQueryRequest):
                 metadata=item["metadata"],
             ))
     
-    # Sort by score
     results.sort(key=lambda x: x.score, reverse=True)
     results = results[:req.top_k]
     
-    # VLM answer mock
     vlm_answer = None
     if req.use_vlm and results:
         vlm_answer = {
             "connected": True if "junction" in query_lower else False,
             "confidence": 0.75,
             "reasoning": f"Based on {len(results)} similar examples, this appears to be {results[0].label}",
-            "examples_used": len(results)
+            "examples_used": len(results),
+            "backend": "simple"
         }
     
     return RAGQueryResponse(
@@ -507,15 +714,30 @@ async def rag_query(req: RAGQueryRequest):
 
 @rag_router.get("/stats")
 async def rag_stats():
-    """Get RAG store stats."""
+    """Get RAG store stats - real VisionRAG if available."""
+    rag = _get_vision_rag()
+    if rag:
+        try:
+            return rag.stats()
+        except Exception:
+            pass
+    
     return {
         "total_items": len(rag_store),
         "labels": list(set(item["label"] for item in rag_store)),
+        "backend": "simple",
     }
 
 
 @rag_router.delete("/clear")
 async def rag_clear():
     """Clear RAG store."""
+    rag = _get_vision_rag()
+    if rag:
+        try:
+            rag.clear()
+        except Exception:
+            pass
+    
     rag_store.clear()
     return {"status": "cleared"}
