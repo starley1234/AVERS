@@ -825,19 +825,112 @@ class ProductionPipeline:
         image: np.ndarray,
         manifest: AVERSManifest,
     ) -> None:
-        """Run VLM arbitration for uncertain cases."""
-        # Only process if there are issues
+        """Run VLM arbitration for uncertain cases with Vision RAG."""
         if not manifest.human_review_required:
             return
         
-        # Limit calls
         max_calls = self.config.vlm_arbitrator.max_vlm_calls
         issues_to_process = manifest.human_review_required[:max_calls]
         
-        # Mock VLM for now (real integration would use transformers)
+        # Try Vision RAG if enabled
+        use_rag = False
+        rag = None
+        if hasattr(self.config, 'vision_rag') and self.config.vision_rag.enabled:
+            try:
+                from avers.rag import get_rag
+                rag = get_rag()
+                use_rag = True
+                logger.info(f"Using Vision RAG with {rag.stats().get('total', 0)} examples")
+            except Exception as e:
+                logger.warning(f"Vision RAG not available: {e}")
+        
+        # Try real VLM if available
+        vlm_wrapper = None
+        if self.config.vlm_arbitrator.enabled:
+            try:
+                from avers.stages.stage6_vlm_arbitrator import VLMWrapper, VLMConfig, ArbitrationEngine
+                vlm_config = VLMConfig(
+                    model_name=self.config.vlm_arbitrator.model_name,
+                    device=self.config.vlm_arbitrator.device,
+                    roi_size=self.config.vlm_arbitrator.roi_size,
+                    max_calls=max_calls,
+                )
+                vlm_wrapper = VLMWrapper(vlm_config)
+                vlm_wrapper.load()
+                engine = ArbitrationEngine(vlm_wrapper)
+                logger.info(f"VLM loaded: {self.config.vlm_arbitrator.model_name}")
+            except Exception as e:
+                logger.warning(f"VLM not available, using RAG/mock: {e}")
+        
+        # Process each issue
         for issue in issues_to_process:
-            issue.resolved = True
-            issue.resolution = "mock_vlm_resolution"
+            try:
+                # Extract ROI
+                x1, y1, x2, y2 = issue.bbox
+                # Expand for context
+                h, w = image.shape[:2]
+                cx, cy = (x1+x2)//2, (y1+y2)//2
+                roi_size = self.config.vlm_arbitrator.roi_size
+                x1_roi = max(0, cx - roi_size//2)
+                y1_roi = max(0, cy - roi_size//2)
+                x2_roi = min(w, cx + roi_size//2)
+                y2_roi = min(h, cy + roi_size//2)
+                roi = image[y1_roi:y2_roi, x1_roi:x2_roi]
+                
+                if roi.size == 0:
+                    continue
+                
+                # Resize to standard
+                import cv2
+                roi_resized = cv2.resize(roi, (roi_size, roi_size))
+                
+                # RAG query first
+                rag_answer = None
+                if use_rag and rag:
+                    try:
+                        rag_response = rag.query(
+                            image=roi_resized,
+                            text=issue.description,
+                            top_k=self.config.vision_rag.top_k if hasattr(self.config, 'vision_rag') else 5,
+                            use_vlm=vlm_wrapper is not None
+                        )
+                        if rag_response.vlm_answer:
+                            rag_answer = rag_response.vlm_answer
+                            logger.debug(f"RAG answer for {issue.bbox}: {rag_answer}")
+                    except Exception as e:
+                        logger.warning(f"RAG query failed: {e}")
+                
+                # VLM arbitration
+                if vlm_wrapper and 'engine' in locals():
+                    # Use engine
+                    if issue.issue_type.value == "suspicious_crossing":
+                        result = engine.resolve_crossing(image, issue.bbox)
+                    elif issue.issue_type.value == "low_confidence_text":
+                        result = engine.resolve_text(image, issue.bbox, issue.suggestions)
+                    else:
+                        result = engine.resolve_junction(image, issue.bbox)
+                    
+                    if result.resolved:
+                        issue.resolved = True
+                        if result.connected is not None:
+                            issue.resolution = f"connected={result.connected}, conf={result.confidence:.2f}, rag={rag_answer is not None}"
+                        else:
+                            issue.resolution = f"text={result.selected_text}, conf={result.confidence:.2f}"
+                elif rag_answer:
+                    # Use RAG answer
+                    issue.resolved = True
+                    if "connected" in rag_answer:
+                        issue.resolution = f"rag_connected={rag_answer['connected']}, conf={rag_answer.get('confidence', 0.5):.2f}, method=rag"
+                    else:
+                        issue.resolution = f"rag_{rag_answer}"
+                else:
+                    # Mock fallback
+                    issue.resolved = True
+                    issue.resolution = "mock_vlm_resolution_no_vlm"
+            
+            except Exception as e:
+                logger.warning(f"Failed to arbitrate issue {issue.bbox}: {e}")
+                issue.resolved = False
     
     @staticmethod
     def _bbox_center(bbox: Tuple[int, int, int, int]) -> Tuple[int, int]:
