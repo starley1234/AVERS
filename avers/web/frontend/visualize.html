@@ -18,7 +18,7 @@
 }
 * {margin:0;padding:0;box-sizing:border-box}
 body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden}
-.header {height:56px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:0 20px; flex-shrink:0}
+.header {min-height:56px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; padding:4px 20px; flex-shrink:0; flex-wrap:wrap}
 .logo {display:flex; align-items:center; gap:12px; font-weight:700; font-size:18px}
 .logo-mark {width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white}
 .btn {height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s}
@@ -126,14 +126,14 @@ body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); h
 
 <div class="header">
   <div class="logo"><div class="logo-mark">A</div> АВЕРС — Визуализация · Diff + 3D</div>
-  <div style="display:flex;gap:8px;align-items:center">
-    <span id="vizHint" style="color:var(--text2);font-size:11px;margin-right:8px">Перетащите скан в окно или нажмите «Загрузить скан»</span>
-    <input type="file" id="vizFile" accept=".tif,.tiff,.png,.jpg,.jpeg,.bmp,.pdf" style="display:none" onchange="if(this.files[0]) handleUpload(this.files[0])">
+  <input type="file" id="vizFile" accept=".tif,.tiff,.png,.jpg,.jpeg,.bmp,.pdf" style="display:none" onchange="if(this.files[0]) handleUpload(this.files[0])">
+  <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;max-width:70%">
+    <button class="btn btn-primary" onclick="document.getElementById('vizFile').click()">📂 Загрузить скан</button>
+    <span id="vizHint" style="color:var(--text2);font-size:11px">или перетащите файл в окно</span>
     <button class="btn" onclick="location.href='/'">← Валидатор</button>
     <button class="btn" onclick="location.href='/annotator'">✏️ Аннотатор</button>
     <button class="btn" onclick="window.open('/docs','_blank')">API</button>
     <button class="btn" onclick="generateReport()">📄 Отчет</button>
-    <button class="btn btn-primary" onclick="document.getElementById('vizFile').click()">📂 Загрузить скан</button>
   </div>
 </div>
 
@@ -251,7 +251,7 @@ body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); h
       </div>
       <div class="split-pane" id="paneRight">
         <div class="split-label" id="labelRight">Текущая стадия</div>
-        <div class="split-canvas" id="canvasRight"><img id="imgRight" style="display:none"><div class="empty" id="emptyRight">Загрузите файл или выберите стадию</div></div>
+        <div class="split-canvas" id="canvasRight"><img id="imgRight" style="display:none"><div class="empty" id="emptyRight">Нажмите «📂 Загрузить скан» (слева сверху)<br>или перетащите файл в окно</div></div>
       </div>
     </div>
 
@@ -340,7 +340,7 @@ let state = {
 };
 
 const STEPS = [
-  {name:'Исходник', desc:'TIF/PNG/PDF', icon:'📄', details:'Загрузите схему. PDF многостраничный. Принцип: гибридный пайплайн, не скармливаем 15k×4k в VLM.'},
+  {name:'Исходник', desc:'TIF/PNG/PDF', icon:'📄', details:'Нажмите «📂 Загрузить скан» или перетащите файл в окно. PDF многостраничный. Принцип: гибридный пайплайн, не скармливаем 15k×4k в VLM.'},
   {name:'SAHI', desc:'1024 tiles 0.2', icon:'◫', details:'SAHI: нарезка на тайлы 1024×1024 overlap 0.2, параллельная обработка, NMS. Зеленые области — overlap.'},
   {name:'Детекция', desc:'RT-DETR 10 классов', icon:'◈', details:'RT-DETRv2-l/YOLOv11x, 10 классов ГОСТ: connector_body, pin, junction_dot, ground, shield, offpage, diode, relay, resistor, capacitor. Обучение на Masala-CHAI 4300 + ElectroNet 3500 + синтетика.'},
   {name:'OCR', desc:'PaddleOCR ГОСТ', icon:'T', details:'PaddleOCR DBNet++ + SVTR, 0°/90°/270°, regex Х1, БПВЛ, +27В, k-d tree привязка.'},
