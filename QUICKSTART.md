@@ -179,5 +179,6 @@ bash scripts/smoke_test.sh
 | `ImportError: libGL.so.1` | Установился `opencv-python` вместо headless: `pip uninstall -y opencv-python && pip install --force-reinstall --no-deps opencv-python-headless` |
 | `device='cuda' but CUDA unavailable` | Нет GPU → используйте `--device auto` или `--device cpu` (теперь это дефолт) |
 | `ultralytics ... got multiple values for keyword argument 'epochs'` | Исправлено в `avers/dataset/train.py` — обновите код |
+| `pip install sahi` не ставится | SAHI 0.12+ тянет тяжёлый набор зависимостей (numba, rfdetr, inference, transformers...), у которых нет колёс под Python 3.14. **SAHI больше не обязателен**: тайловая детекция работает на чистом ultralytics (коммит d9336ce). Нужен именно SAHI — ставьте в venv на Python 3.11/3.12 |
 | `pip install paddlepaddle` падает: «No matching distribution» | У вас Python 3.13/3.14 — paddlepaddle под них не публикуется. Варианты: `pip install easyocr` (подхватится автоматически как OCR-бэкенд) или venv на Python 3.11/3.12 |
 | Медленно качаются веса | Веса моделей (`rtdetr-l.pt` 63 МБ) качаются с GitHub один раз; можно положить `.pt` рядом с местом запуска вручную |
