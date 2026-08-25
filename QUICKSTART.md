@@ -168,6 +168,7 @@ bash scripts/smoke_test.sh
 
 | Симптом | Причина / решение |
 |---|---|
+| `set: pipefail: invalid option name` при запуске `scripts/*.sh` | Скрипты выгружены с Windows-переводами строк (CRLF). Разово: `sed -i 's/\r$//' scripts/*.sh`. Навсегда: обновите репозиторий — в `.gitattributes` теперь `*.sh text eol=lf`, затем `git rm --cached -r scripts && git checkout -- scripts` |
 | `ImportError: libGL.so.1` | Установился `opencv-python` вместо headless: `pip uninstall -y opencv-python && pip install --force-reinstall --no-deps opencv-python-headless` |
 | `device='cuda' but CUDA unavailable` | Нет GPU → используйте `--device auto` или `--device cpu` (теперь это дефолт) |
 | `ultralytics ... got multiple values for keyword argument 'epochs'` | Исправлено в `avers/dataset/train.py` — обновите код |

@@ -1,2 +1,22 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Скрипты и Dockerfile: ТОЛЬКО LF.
+# CRLF ломает bash ("set: pipefail: invalid option name") и Dockerfile
+# (продолжения строк с обратным слэшем).
+*.sh   text eol=lf
+*.bash text eol=lf
+Dockerfile text eol=lf
+
+# Python - консистентный LF
+*.py text eol=lf
+
+# Бинарные файлы - не трогать никогда
+*.pt   binary
+*.onnx binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.tif  binary
+*.tiff binary
+*.pdf  binary
