@@ -169,6 +169,10 @@ class SlicedDetector:
         self._yolo_detector = YOLODetector(cfg)
         if not self._yolo_detector.load():
             raise RuntimeError("YOLO detector failed to load")
+        if getattr(self._yolo_detector, "model", None) is None:
+            # YOLODetector сам тихо уходит в mock, если ultralytics не установлен -
+            # такой режим сюда допускать нельзя, иначе получим заглушку без предупреждения
+            raise RuntimeError("ultralytics не установлен - нет реального инференса")
         self._loaded = True
         self.backend = "ultralytics"
         logger.info(f"ultralytics model loaded (без SAHI): {self.model_path}")
@@ -698,12 +702,43 @@ class ProductionPipeline:
         
         return result
     
+    def _resolve_model_path(self) -> Optional[str]:
+        """Путь к весам детектора с авто-подхватом.
+
+        Приоритет: detection.model_path из конфига > $AVERS_MODEL_PATH >
+        стандартные пути результата обучения (/tmp/avers_runs/.../weights/best.pt,
+        берётся самый свежий). Если ничего нет - возвращаем как есть (None),
+        дальше сработает честное предупреждение о заглушке.
+        """
+        mp = self.config.detection.model_path
+        if mp and Path(str(mp)).expanduser().exists():
+            return str(Path(str(mp)).expanduser())
+
+        candidates: List[Path] = []
+        env = os.getenv("AVERS_MODEL_PATH")
+        if env:
+            candidates.append(Path(env).expanduser())
+        candidates += [
+            Path("/tmp/avers_runs/avers_yolo/weights/best.pt"),
+            Path("/tmp/avers_runs/avers_rtdetr/weights/best.pt"),
+        ]
+        existing = [c for c in candidates if c.exists()]
+        if existing:
+            best = max(existing, key=lambda c: c.stat().st_mtime)
+            logger.info(
+                f"detection.model_path не задан - авто-подхват обученных весов: {best} "
+                f"(задайте путь явно в config.yaml, чтобы отключить авто-подхват)"
+            )
+            return str(best)
+        return mp
+
     def _run_detection(
         self, image: np.ndarray, result: "PipelineResult"
     ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]]]:
         """Run component detection."""
+        resolved_model = self._resolve_model_path()
         detector = SlicedDetector(
-            model_path=self.config.detection.model_path,
+            model_path=resolved_model,
             model_type=self.config.detection.model_type,
             confidence_threshold=self.config.detection.confidence_threshold,
             device=self.config.detection.device,
@@ -712,7 +747,7 @@ class ProductionPipeline:
         )
         detector.load()
         logger.info(f"Стадия 2: бэкенд детекции = {detector.backend} "
-                    f"(model_path={self.config.detection.model_path or 'не задан'})")
+                    f"(model_path={resolved_model or 'не задан'})")
         detections = detector.detect(image)
         bboxes = [d["bbox"] for d in detections]
 

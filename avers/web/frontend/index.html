@@ -605,6 +605,7 @@ body {
           <div class="config-row">
             <div class="config-item"><div class="config-label">Conf. thr</div><input class="config-input" id="cfgConf" value="0.25"></div>
             <div class="config-item"><div class="config-label">Snap R</div><input class="config-input" id="cfgSnap" value="15"></div>
+            <div class="config-item" style="grid-column:1/-1"><div class="config-label">Модель детекции (.pt) — пусто = из config.yaml / авто-подхват</div><input class="config-input" id="cfgModel" placeholder="например: /tmp/avers_runs/avers_yolo/weights/best.pt"></div>
           </div>
           <div class="config-item">
             <div class="config-label">VLM модель</div>
@@ -976,9 +977,13 @@ function switchPDFPage(pageIdx) {
 async function runPipeline() {
   if (!state.fileId) return;
   
+  const cfgModelPath = (document.getElementById('cfgModel')?.value || '').trim();
   const cfg = {
     slicing: { tile_size: parseInt(document.getElementById('cfgTile').value), overlap_ratio: parseFloat(document.getElementById('cfgOverlap').value) },
-    detection: { confidence_threshold: parseFloat(document.getElementById('cfgConf').value) },
+    detection: {
+      confidence_threshold: parseFloat(document.getElementById('cfgConf').value),
+      ...(cfgModelPath ? { model_path: cfgModelPath } : {})
+    },
     graph_synthesis: { snap_radius: parseInt(document.getElementById('cfgSnap').value) },
     pdf_page: state.currentPDFPage || 0,
     pdf_process_all: document.getElementById('pdfProcessAll')?.checked || false,

@@ -1,5 +1,7 @@
 """AVERS Web API - FastAPI routes."""
 
+import logging
+import os
 import uuid
 import time
 import json
@@ -256,6 +258,32 @@ async def start_processing(
     return {"job_id": job_id, "file_id": file_id, "status": "pending"}
 
 
+def _load_base_config() -> AVERSConfig:
+    """Базовый конфиг для Web-пайплайна.
+
+    Приоритет: $AVERS_CONFIG > ./config.yaml > config.yaml в корне репозитория > дефолты кода.
+    Раньше Web UI игнорировал config.yaml и всегда работал на дефолтах -
+    из-за этого detection.model_path из файла не подхватывался.
+    """
+    log = logging.getLogger("avers.web")
+    candidates = []
+    env = os.getenv("AVERS_CONFIG")
+    if env:
+        candidates.append(Path(env))
+    candidates.append(Path("config.yaml"))
+    candidates.append(Path(__file__).resolve().parents[2] / "config.yaml")
+    for c in candidates:
+        try:
+            if c and c.exists():
+                cfg = AVERSConfig.from_yaml(c)
+                log.info(f"Конфиг загружен: {c}")
+                return cfg
+        except Exception as e:
+            log.warning(f"Не удалось загрузить {c}: {e}")
+    log.warning("config.yaml не найден - используются дефолты кода")
+    return AVERSConfig()
+
+
 async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
     """Background pipeline execution - supports PDF multi-page."""
     job = jobs_db[job_id]
@@ -269,8 +297,8 @@ async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
         # Load images - handle PDF multi-page via unified loader
         from avers.utils.image_helpers import load_image_auto
         
-        # Config
-        config = AVERSConfig()
+        # Config: база из config.yaml (иначе дефолты кода), поверх - UI-оверрайды
+        config = _load_base_config()
         if request.config_overrides:
             for key, value in request.config_overrides.items():
                 if hasattr(config, key):
