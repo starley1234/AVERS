@@ -362,10 +362,10 @@ def cmd_dataset(args) -> int:
 
 def cmd_rag(args) -> int:
     """RAG tools."""
-    from avers.rag import VisionRAG
+    from avers.rag import get_rag
     import cv2
     
-    rag = VisionRAG()
+    rag = get_rag()  # синглтон: подхватывает сохранённую базу и автосохраняет
     
     if args.rag_command == "query":
         image = None

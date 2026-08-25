@@ -178,6 +178,11 @@ class CLIPEmbedding(EmbeddingEngine):
         
         return combined.astype(np.float32)
     
+    @property
+    def backend(self) -> str:
+        """Какой движок реально работает: 'clip' или 'hog_fallback'."""
+        return "clip" if self.model is not None else "hog_fallback"
+
     def encode_text(self, text: str) -> np.ndarray:
         """Закодировать текст."""
         if not self._loaded:
@@ -197,12 +202,12 @@ class CLIPEmbedding(EmbeddingEngine):
             except Exception as e:
                 logger.warning(f"CLIP text encode failed: {e}")
         
-        # Fallback: simple bag-of-words hash
-        # Create 512d vector from text hash
-        np.random.seed(hash(text) % (2**32))
-        vec = np.random.randn(512).astype(np.float32)
-        vec = vec / (np.linalg.norm(vec) + 1e-6)
-        return vec
+        # Fallback (без CLIP): честный нулевой вектор - текстовой семантики нет.
+        # Раньше здесь был случайный вектор от hash(text): hash() в Python солёный,
+        # вектор менялся между запусками процесса (ломал сохранённую базу),
+        # а как шум он ещё и портил мультимодальный запрос.
+        # Текстовый поиск в fallback-режиме делает VisionRAG.query по label/description.
+        return np.zeros(512, dtype=np.float32)
 
 
 class MultiModalEmbedding:
@@ -232,16 +237,18 @@ class MultiModalEmbedding:
         if text is not None:
             text_emb = self.engine.encode_text(text)
         
-        if img_emb is not None and text_emb is not None:
-            # Weighted combination
-            combined = weight * img_emb + (1-weight) * text_emb
-            norm = np.linalg.norm(combined)
-            if norm > 0:
-                combined = combined / norm
-            return combined
-        elif img_emb is not None:
-            return img_emb
-        elif text_emb is not None:
-            return text_emb
-        else:
+        # Нулевые (недоступные) части исключаем, веса оставшихся нормируем
+        parts = []
+        if img_emb is not None and np.linalg.norm(img_emb) > 1e-8:
+            parts.append((img_emb, weight))
+        if text_emb is not None and np.linalg.norm(text_emb) > 1e-8:
+            parts.append((text_emb, 1 - weight))
+        
+        if not parts:
             return np.zeros(512, dtype=np.float32)
+        total_w = sum(w for _, w in parts)
+        combined = sum(e * (w / total_w) for e, w in parts)
+        norm = np.linalg.norm(combined)
+        if norm > 0:
+            combined = combined / norm
+        return combined

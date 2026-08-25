@@ -1524,19 +1524,34 @@ async function clearRAG() {
 }
 
 async function indexCurrent() {
-  const label = document.getElementById('ragLabel').value || 'junction';
-  // For demo, use dummy bbox
-  await fetch(`${API}/api/rag/index`, {
+  const label = (document.getElementById('ragLabel')?.value || '').trim() || 'junction';
+  const imgEl = document.getElementById('canvasImg');
+  if (!state.fileId || !imgEl || !imgEl.src || !imgEl.naturalWidth) {
+    document.getElementById('statusText').textContent = 'Сначала загрузите схему — в RAG индексируется её фрагмент';
+    return;
+  }
+  // ROI 256x256 из центра текущего чертежа
+  const c = document.createElement('canvas');
+  const size = 256;
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  const s = Math.min(imgEl.naturalWidth, imgEl.naturalHeight);
+  ctx.drawImage(imgEl, (imgEl.naturalWidth - s)/2, (imgEl.naturalHeight - s)/2, s, s, 0, 0, size, size);
+  const image_base64 = c.toDataURL('image/png');
+  
+  const res = await fetch(`${API}/api/rag/index`, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
-      image_base64: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=',
-      bbox: [100,100,200,200],
+      image_base64,
+      bbox: [Math.round((imgEl.naturalWidth - s)/2), Math.round((imgEl.naturalHeight - s)/2), s, s],
       label: label,
-      description: 'Example indexed from validator UI'
+      description: `Фрагмент ${state.fileName || 'чертежа'} (центр), класс: ${label}`
     })
   });
-  document.getElementById('statusText').textContent = `Добавлен в RAG: ${label}`;
+  const data = await res.json();
+  document.getElementById('statusText').textContent =
+    `Добавлен в RAG: ${label} (${data.backend === 'vision_rag' ? 'векторная БД' : 'упрощённый режим'})`;
 }
 
 // Init

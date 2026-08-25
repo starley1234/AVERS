@@ -155,6 +155,12 @@ class VisionRAG:
         )
         self.entries[entry_id] = rag_entry
         
+        # Автосохранение: иначе всё проиндексированное теряется при перезапуске
+        try:
+            self.save()
+        except Exception as e:
+            logger.warning(f"RAG autosave failed: {e}")
+        
         logger.info(f"Added RAG example: {entry_id} - {label}")
         return entry_id
     
@@ -183,6 +189,37 @@ class VisionRAG:
         
         # Encode query
         query_embedding = self.multi_modal.encode(image=image, text=text)
+        
+        # Текстовый запрос без картинки (или в fallback-режиме без CLIP):
+        # векторное поиск бесполезен - ищем по label/description подстрокой
+        engine_backend = getattr(self.embedding_engine, "backend", "clip")
+        text_only = image is None or (np.linalg.norm(query_embedding) < 1e-8) or engine_backend != "clip"
+        if text_only and text:
+            norm_text = text.lower().strip()
+            scored = []
+            for entry in self.entries.values():
+                hay_label = entry.label.lower()
+                hay_desc = (entry.description or "").lower()
+                if norm_text == hay_label:
+                    score = 0.95
+                elif norm_text in hay_label:
+                    score = 0.8
+                elif norm_text in hay_desc:
+                    score = 0.6
+                else:
+                    # совпадение по отдельным словам
+                    words = [w for w in norm_text.split() if len(w) > 2]
+                    hits = sum(1 for wd in words if wd in hay_label or wd in hay_desc)
+                    score = min(0.5, 0.15 * hits) if hits else 0.0
+                if score > 0:
+                    scored.append((RAGResult(entry=entry, score=score), score))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            rag_results = [r for r, _ in scored[:top_k]]
+            
+            vlm_answer = None
+            if use_vlm and rag_results:
+                _, vlm_answer = self._generate_vlm_answer(query, rag_results, custom_prompt=vlm_prompt)
+            return RAGResponse(query=query, results=rag_results, vlm_answer=vlm_answer, prompt_used=None)
         
         # Search
         search_results = self.vector_store.search(query_embedding, top_k=top_k)
@@ -355,12 +392,17 @@ Respond in JSON: {{"connected": true/false, "confidence": 0.0-1.0, "reasoning": 
             **store_stats,
             "rag_entries": len(self.entries),
             "storage_path": str(self.storage_path),
+            "embedding_backend": getattr(self.embedding_engine, "backend", "unknown"),
         }
     
     def clear(self):
         """Очистить базу."""
         self.vector_store.clear()
         self.entries.clear()
+        try:
+            self.save()
+        except Exception as e:
+            logger.warning(f"RAG save after clear failed: {e}")
         logger.info("RAG cleared")
 
 
@@ -372,4 +414,9 @@ def get_rag(storage_path: Path = Path("/tmp/avers_rag")) -> VisionRAG:
     global _global_rag
     if _global_rag is None:
         _global_rag = VisionRAG(storage_path=storage_path)
+        # Загружаем ранее сохранённую базу, если есть
+        try:
+            _global_rag.load()
+        except Exception as e:
+            logger.warning(f"RAG load skipped: {e}")
     return _global_rag

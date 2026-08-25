@@ -217,8 +217,9 @@ RC_RAG=0
 import sys, traceback
 try:
     import numpy as np, cv2
-    from avers.rag import VisionRAG
-    rag = VisionRAG(storage_path="/tmp/avers_smoke_rag_store")
+    from avers.rag import get_rag
+    rag = get_rag(storage_path="/tmp/avers_smoke_rag_store")
+    print(f"  RAG backend эмбеддингов: {rag.stats().get('embedding_backend')}")
     roi = np.ones((256, 256, 3), np.uint8) * 255
     cv2.circle(roi, (128, 128), 6, (0, 0, 0), -1)
     cv2.line(roi, (0, 128), (256, 128), (0, 0, 0), 2)
@@ -226,6 +227,18 @@ try:
     eid = rag.add_example(roi, label="junction_dot", description="точка соединения")
     resp = rag.query(image=roi, text="junction dot", top_k=3)
     print(f"  RAG: пример {eid}, найдено {len(resp.results)} результатов")
+    # персистентность: перечитываем базу заново
+    import avers.rag.vision_rag as vr
+    vr._global_rag = None
+    rag2 = get_rag(storage_path="/tmp/avers_smoke_rag_store")
+    resp2 = rag2.query(image=roi, text=None, top_k=3, use_vlm=False)
+    assert resp2.results, "база пуста после перезагрузки"
+    assert resp2.results[0].entry.label == "junction_dot", resp2.results[0].entry.label
+    print(f"  персистентность: {rag2.stats()['rag_entries']} записей, top-1 после перезагрузки корректен")
+    # текстовый поиск
+    resp3 = rag2.query(text="junction", image=None, top_k=3, use_vlm=False)
+    assert resp3.results, "текстовый поиск не работает"
+    print("  текстовый поиск: OK")
 except ImportError as e:
     print(f"  RAG недоступен (нет зависимости): {e}")
     raise SystemExit(3)
@@ -234,7 +247,7 @@ except Exception:
     raise SystemExit(1)
 EOF
 if [ "$RC_RAG" -eq 0 ]; then
-  ok "Vision RAG: добавление + запрос"
+  ok "Vision RAG: добавление + запрос + персистентность + текстовый поиск"
 elif [ "$RC_RAG" -eq 3 ]; then
   skip "Vision RAG (не установлены transformers/faiss — см. вывод выше)"
 else

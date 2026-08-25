@@ -1037,8 +1037,12 @@ def _get_vision_rag():
     """Get VisionRAG instance."""
     try:
         from avers.rag import get_rag
-        return get_rag()
-    except Exception:
+        rag = get_rag()
+        if rag is None:
+            logging.getLogger("avers.web").warning("VisionRAG недоступен - RAG работает в упрощённом режиме (simple store)")
+        return rag
+    except Exception as e:
+        logging.getLogger("avers.web").warning(f"VisionRAG init failed: {e} - упрощённый режим RAG")
         return None
 
 
@@ -1208,6 +1212,7 @@ async def rag_stats():
         "total_items": len(rag_store),
         "labels": list(set(item["label"] for item in rag_store)),
         "backend": "simple",
+        "embedding_backend": "none",
     }
 
 
