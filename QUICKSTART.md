@@ -56,6 +56,9 @@ bash scripts/smoke_test.sh
 
 ### Сценарий А — обработать схему (распознавание)
 
+> 💡 Если ставили через `quickstart.sh` — ваше окружение в `.venv`: `source .venv/bin/activate`.
+> Можно и не активировать: скрипты сами найдут `.venv`/`venv`/активированное окружение.
+
 ```bash
 # Своё изображение/PDF (TIF, PNG, JPG, PDF):
 python -m avers process мой_скан.tif -o result.json

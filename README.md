@@ -71,6 +71,13 @@ pip install ultralytics sahi paddleocr transformers torch faiss-cpu
 pip install -e ".[all]"
 ```
 
+> 💡 **Где живёт окружение.** Скрипт `scripts/quickstart.sh` создаёт окружение в **`.venv`**
+> (а не `venv`). Войти в него: `source .venv/bin/activate`. Скрипты AVERS сами находят
+> любое из двух (`.venv`, `venv`) или уже активированное окружение — активация не обязательна.
+>
+> ⚠️ Если скрипты падают с `set: pipefail: invalid option name` — в рабочей копии CRLF
+> (Windows-переводы строк). Разово лечится: `sed -i 's/\r$//' scripts/*.sh`
+
 ## 🚀 Быстрый старт
 
 ### CLI - обработка схемы (изображения + PDF)
