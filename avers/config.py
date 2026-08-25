@@ -110,6 +110,18 @@ class VLMArbitratorConfig(BaseModel):
         default=50,
         description="Maximum VLM calls per image (cost control)"
     )
+    # Внешняя LLM через OpenAI-совместимый API (None = взять из AVERS_VLM_* env)
+    provider: Optional[str] = Field(
+        default=None,
+        description="'auto' | 'api' | 'local' | 'mock'. auto: API если задан api_base, иначе локально"
+    )
+    api_base: Optional[str] = Field(
+        default=None,
+        description="Базовый URL OpenAI-совместимого API, напр. https://api.openai.com/v1 или http://localhost:11434/v1"
+    )
+    api_key: Optional[str] = Field(default=None, description="API ключ (Bearer)")
+    api_model: Optional[str] = Field(default=None, description="Имя модели у провайдера, напр. gpt-4o-mini")
+    api_timeout: Optional[float] = Field(default=60.0, description="Таймаут API-запроса, сек")
 
 
 class OutputConfig(BaseModel):

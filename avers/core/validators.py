@@ -12,6 +12,7 @@ Key improvements:
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict, Any, Union, Callable
 from pathlib import Path
+import os
 import time
 import logging
 
@@ -849,11 +850,21 @@ class ProductionPipeline:
         if self.config.vlm_arbitrator.enabled:
             try:
                 from avers.stages.stage6_vlm_arbitrator import VLMWrapper, VLMConfig, ArbitrationEngine
+                vlm_cfg = self.config.vlm_arbitrator
                 vlm_config = VLMConfig(
-                    model_name=self.config.vlm_arbitrator.model_name,
-                    device=self.config.vlm_arbitrator.device,
-                    roi_size=self.config.vlm_arbitrator.roi_size,
+                    model_name=vlm_cfg.model_name,
+                    device=vlm_cfg.device,
+                    roi_size=vlm_cfg.roi_size,
                     max_calls=max_calls,
+                    # Внешняя LLM: поля конфига, а если не заданы - env AVERS_VLM_*
+                    provider=getattr(vlm_cfg, "provider", None)
+                        or os.getenv("AVERS_VLM_PROVIDER", "auto"),
+                    api_base=getattr(vlm_cfg, "api_base", None)
+                        or os.getenv("AVERS_VLM_API_BASE", ""),
+                    api_key=getattr(vlm_cfg, "api_key", None)
+                        or os.getenv("AVERS_VLM_API_KEY", ""),
+                    api_model=getattr(vlm_cfg, "api_model", None)
+                        or os.getenv("AVERS_VLM_API_MODEL", ""),
                 )
                 vlm_wrapper = VLMWrapper(vlm_config)
                 vlm_wrapper.load()

@@ -82,13 +82,13 @@ def create_main_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--epochs", type=int, default=100)
     train_parser.add_argument("--batch", type=int, default=8)
     train_parser.add_argument("--imgsz", type=int, default=640)
-    train_parser.add_argument("--device", type=str, default="cuda")
+    train_parser.add_argument("--device", type=str, default="auto", help="cuda, cpu или auto (по умолчанию)")
     train_parser.add_argument("--project", type=str, default="/tmp/avers_runs")
     train_parser.add_argument("--pretrained", type=str, default=None)
     
     preview_parser = dataset_sub.add_parser("preview", help="Превью синтетики")
     preview_parser.add_argument("--output", "-o", type=str, default="/tmp/avers_preview")
-    preview_parser.add_argument("--num", type=int, default=10)
+    preview_parser.add_argument("--num", "-n", type=int, default=10)
     preview_parser.add_argument("--size", type=int, default=1024)
     
     export_parser = dataset_sub.add_parser("export", help="Экспорт датасета")
@@ -267,12 +267,21 @@ def cmd_dataset(args) -> int:
     elif args.dataset_command == "train":
         from avers.dataset.train import train_yolo, train_rtdetr
         data_yaml = Path(args.data)
-        
-        if "yolo" in args.model.lower():
-            model_name = args.pretrained or "yolo11x.pt"
+
+        # Маппинг имени модели -> веса (учитываем и полные имена .pt)
+        defaults = {
+            "yolo": "yolo11x.pt", "yolo11n": "yolo11n.pt", "yolo11s": "yolo11s.pt",
+            "yolo11m": "yolo11m.pt", "yolo11x": "yolo11x.pt",
+            "rtdetr": "rtdetr-l.pt", "rtdetr-l": "rtdetr-l.pt", "rtdetr-x": "rtdetr-x.pt",
+        }
+        key = args.model.lower()
+        if key.endswith(".pt"):
+            key = key[:-3]
+        model_name = args.pretrained or defaults.get(key, args.model)
+
+        if "yolo" in key:
             train_yolo(data_yaml, model_name, args.epochs, args.imgsz, args.batch, args.device, args.project)
         else:
-            model_name = args.pretrained or "rtdetr-l.pt"
             train_rtdetr(data_yaml, model_name, args.epochs, args.imgsz, args.batch, args.device, args.project)
         return 0
     

@@ -59,11 +59,20 @@ graph_synthesis:
 # Stage 6: VLM Arbitration
 vlm_arbitrator:
   enabled: true
-  model_name: Qwen/Qwen2.5-VL-7B-Instruct  # or 'google/gemma-4-vit'
+  model_name: Qwen/Qwen2.5-VL-7B-Instruct  # Локальная модель (HuggingFace), если provider != api
   device: cuda
   roi_size: 256                # ROI crop size
   confidence_threshold: 0.65   # Min confidence to trigger VLM
   max_vlm_calls: 50            # Cost control
+
+  # Внешняя LLM через OpenAI-совместимый API (OpenAI, OpenRouter, vLLM, Ollama, LM Studio)
+  # Те же значения можно задать через env: AVERS_VLM_PROVIDER, AVERS_VLM_API_BASE,
+  # AVERS_VLM_API_KEY, AVERS_VLM_API_MODEL, AVERS_VLM_API_TIMEOUT
+  provider: auto               # auto | api | local | mock (auto = API если задан api_base, иначе локально)
+  api_base: null               # напр. https://api.openai.com/v1 или http://localhost:11434/v1
+  api_key: null                # Bearer-ключ (для OpenRouter/OpenAI); локальным серверам часто не нужен
+  api_model: null              # имя модели у провайдера, напр. gpt-4o-mini или qwen2.5vl:7b
+  api_timeout: 60              # сек
 
 # Vision RAG (NEW in v0.2)
 vision_rag:

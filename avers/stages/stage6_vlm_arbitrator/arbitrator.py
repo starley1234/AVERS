@@ -13,6 +13,11 @@ Only called for ROI patches (256x256) where confidence is low.
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict, Any
 from pathlib import Path
+import base64
+import json
+import os
+import urllib.error
+import urllib.request
 import numpy as np
 import cv2
 
@@ -52,9 +57,31 @@ TEXT_PROMPT = """Look at this schematic text label. What does it say? Consider:
 Respond in JSON format: {"text": "recognized text", "confidence": 0.0-1.0, "alternatives": ["option1", "option2"]}"""
 
 
+def _env_str(name: str, default: str = "") -> str:
+    return os.getenv(name, default) or default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
 @dataclass
 class VLMConfig:
-    """VLM arbitration configuration."""
+    """VLM arbitration configuration.
+
+    Провайдер (provider):
+      - "auto"  : внешний API, если задан api_base, иначе локальная модель
+      - "api"   : внешний OpenAI-совместимый API (api_base + api_key + api_model)
+      - "local" : локальная модель через transformers
+      - "mock"  : заглушка без инференса
+
+    Все api_* параметры можно задать через переменные окружения:
+      AVERS_VLM_PROVIDER, AVERS_VLM_API_BASE, AVERS_VLM_API_KEY,
+      AVERS_VLM_API_MODEL, AVERS_VLM_API_TIMEOUT
+    """
     model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"
     device: str = "cuda"
     roi_size: int = 256
@@ -62,6 +89,26 @@ class VLMConfig:
     max_calls: int = 50
     temperature: float = 0.1
     max_tokens: int = 256
+    # Внешняя LLM (OpenAI-совместимый API: OpenAI, OpenRouter, vLLM, Ollama /v1, LM Studio)
+    provider: str = field(default_factory=lambda: _env_str("AVERS_VLM_PROVIDER", "auto"))
+    api_base: str = field(default_factory=lambda: _env_str("AVERS_VLM_API_BASE", ""))
+    api_key: str = field(default_factory=lambda: _env_str("AVERS_VLM_API_KEY", ""))
+    api_model: str = field(default_factory=lambda: _env_str("AVERS_VLM_API_MODEL", ""))
+    api_timeout: float = field(default_factory=lambda: _env_float("AVERS_VLM_API_TIMEOUT", 60.0))
+
+    def __post_init__(self):
+        self.provider = (self.provider or "auto").strip().lower()
+        if self.api_base:
+            self.api_base = self.api_base.rstrip("/")
+
+    def resolved_provider(self) -> str:
+        """Итоговый провайдер с учётом правила auto."""
+        if self.provider == "auto":
+            return "api" if self.api_base else "local"
+        return self.provider
+
+    def masked_api_key(self) -> str:
+        return (self.api_key[:4] + "..." + self.api_key[-4:]) if len(self.api_key) > 8 else ("set" if self.api_key else "")
 
 
 @dataclass
@@ -101,8 +148,35 @@ class VLMWrapper:
         self.model = None
         self.processor = None
         self._loaded = False
-    
+
     def load(self) -> bool:
+        """Загрузить бэкенд согласно provider."""
+        if self._loaded:
+            return True
+
+        provider = self.config.resolved_provider()
+
+        if provider == "api":
+            if not self.config.api_base:
+                logger.warning("provider='api', но api_base не задан - будет использован mock")
+            else:
+                logger.info(
+                    f"VLM backend: внешний API {self.config.api_base} "
+                    f"(model={self.config.api_model or self.config.model_name}, "
+                    f"key={self.config.masked_api_key() or 'not set'})"
+                )
+            # Локальная модель не нужна - сетевые вызовы идут напрямую
+            self.model = None
+            self.processor = None
+            self._loaded = True
+            return True
+
+        if provider == "mock":
+            return self._load_mock()
+
+        return self._load_local()
+
+    def _load_local(self) -> bool:
         """Load VLM model."""
         if self._loaded:
             return True
@@ -163,6 +237,15 @@ class VLMWrapper:
         if not self._loaded:
             self.load()
         
+        provider = self.config.resolved_provider()
+        
+        if provider == "api" and self.config.api_base:
+            try:
+                return self._api_query(image, prompt)
+            except Exception as e:
+                logger.error(f"External VLM API query failed: {e}")
+                return self._mock_query(image, prompt)
+        
         if self.model is None:
             return self._mock_query(image, prompt)
         
@@ -171,6 +254,67 @@ class VLMWrapper:
         except Exception as e:
             logger.error(f"VLM query failed: {e}")
             return self._mock_query(image, prompt)
+
+    def _api_query(self, image: np.ndarray, prompt: str) -> Dict[str, Any]:
+        """Запрос к внешней OpenAI-совместимой VLM (chat/completions с image_url).
+
+        Совместимо с: OpenAI, OpenRouter, vLLM, Ollama (http://host:11434/v1),
+        LM Studio и любыми другими серверами с /v1/chat/completions.
+        """
+        ok, buf = cv2.imencode(".png", image)
+        if not ok:
+            raise ValueError("Failed to encode ROI image to PNG")
+        data_uri = "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
+
+        url = self.config.api_base.rstrip("/") + "/chat/completions"
+        payload = {
+            "model": self.config.api_model or self.config.model_name,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                    ],
+                },
+            ],
+            "temperature": self.config.temperature,
+            "max_tokens": self.config.max_tokens,
+        }
+
+        headers = {"Content-Type": "application/json"}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=self.config.api_timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        content = data["choices"][0]["message"]["content"]
+        logger.debug(f"External VLM response: {content[:200]}")
+        return self._parse_response(content)
+
+    def check_api(self) -> bool:
+        """Проверить доступность внешнего API (лёгкий запрос списка моделей)."""
+        if not self.config.api_base:
+            return False
+        url = self.config.api_base.rstrip("/") + "/models"
+        headers = {}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=min(self.config.api_timeout, 15.0)):
+                return True
+        except Exception as e:
+            logger.warning(f"API check failed for {url}: {e}")
+            return False
     
     def _real_query(self, image: np.ndarray, prompt: str) -> Dict[str, Any]:
         """Run actual VLM inference."""

@@ -9,8 +9,7 @@ pydantic>=2.5.0
 pydantic-settings>=2.1.0
 PyYAML>=6.0.1
 
-# Computer Vision
-opencv-python>=4.8.0
+# Computer Vision (headless: без GUI-зависимостей, работает и в Docker, и в WSL)
 opencv-python-headless>=4.8.0
 scikit-image>=0.22.0
 Pillow>=10.0.0

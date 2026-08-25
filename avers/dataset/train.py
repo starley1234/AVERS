@@ -19,14 +19,44 @@ from avers.core.logger import get_logger
 logger = get_logger("avers.dataset.train")
 
 
+def resolve_device(device: str = "auto") -> str:
+    """Определить устройство обучения.
+
+    'auto' (или пусто) -> cuda, если доступна, иначе cpu.
+    Если запрошена cuda, но она недоступна - предупреждение и fallback на cpu.
+    """
+    device = (device or "auto").strip().lower()
+    if device not in ("auto", ""):
+        if device.startswith("cuda"):
+            try:
+                import torch
+                if not torch.cuda.is_available():
+                    logger.warning(
+                        f"device='{device}' запрошен, но CUDA недоступна - используем CPU"
+                    )
+                    return "cpu"
+            except ImportError:
+                logger.warning("torch не установлен - используем CPU")
+                return "cpu"
+        return device
+
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
 def get_training_config(model_type: str = "rtdetr") -> Dict[str, Any]:
-    """Получить конфиг обучения для модели."""
-    
+    """Получить конфиг обучения для модели.
+
+    Только гиперпараметры. Параметры запуска (epochs/imgsz/batch/device/project)
+    передаются отдельно и мержатся в train_yolo()/train_rtdetr() -
+    иначе ultralytics получает дублирующиеся kwargs и падает с
+    TypeError: got multiple values for keyword argument 'epochs'.
+    """
+
     base_config = {
-        "epochs": 100,
-        "imgsz": 640,
-        "batch": 8,
-        "device": "cuda",
         "workers": 4,
         "optimizer": "AdamW",
         "lr0": 0.0001,
@@ -70,7 +100,7 @@ def train_yolo(
     epochs: int = 100,
     imgsz: int = 640,
     batch: int = 8,
-    device: str = "cuda",
+    device: str = "auto",
     project: str = "/tmp/avers_runs",
     **kwargs
 ):
@@ -87,14 +117,20 @@ def train_yolo(
     
     config = get_training_config("yolo")
     config.update(kwargs)
+    # Явные аргументы имеют приоритет над базовым конфигом; мержим ДО вызова,
+    # чтобы не передать один и тот же kwarg дважды.
+    config.update({
+        "epochs": epochs,
+        "imgsz": imgsz,
+        "batch": batch,
+        "device": resolve_device(device),
+        "project": str(project),
+    })
+    
+    logger.info(f"Run params: epochs={epochs}, imgsz={imgsz}, batch={batch}, device={config['device']}")
     
     results = model.train(
         data=str(data_yaml),
-        epochs=epochs,
-        imgsz=imgsz,
-        batch=batch,
-        device=device,
-        project=project,
         name="avers_yolo",
         **config
     )
@@ -117,7 +153,7 @@ def train_rtdetr(
     epochs: int = 100,
     imgsz: int = 640,
     batch: int = 8,
-    device: str = "cuda",
+    device: str = "auto",
     project: str = "/tmp/avers_runs",
     **kwargs
 ):
@@ -134,14 +170,20 @@ def train_rtdetr(
     
     config = get_training_config("rtdetr")
     config.update(kwargs)
+    # Явные аргументы имеют приоритет над базовым конфигом; мержим ДО вызова,
+    # чтобы не передать один и тот же kwarg дважды.
+    config.update({
+        "epochs": epochs,
+        "imgsz": imgsz,
+        "batch": batch,
+        "device": resolve_device(device),
+        "project": str(project),
+    })
+    
+    logger.info(f"Run params: epochs={epochs}, imgsz={imgsz}, batch={batch}, device={config['device']}")
     
     results = model.train(
         data=str(data_yaml),
-        epochs=epochs,
-        imgsz=imgsz,
-        batch=batch,
-        device=device,
-        project=project,
         name="avers_rtdetr",
         **config
     )
@@ -182,7 +224,9 @@ def validate_model(
 
 def main():
     parser = argparse.ArgumentParser(description="AVERS ГОСТ УГО Training")
-    parser.add_argument("--model", type=str, default="rtdetr", choices=["yolo", "rtdetr", "yolo11x", "yolo11m", "rtdetr-l", "rtdetr-x"], help="Model type")
+    parser.add_argument("--model", type=str, default="rtdetr",
+                        choices=["yolo", "yolo11n", "yolo11s", "yolo11m", "yolo11x", "rtdetr", "rtdetr-l", "rtdetr-x"],
+                        help="Model type (для быстрого теста возьмите yolo11n)")
     parser.add_argument("--data", type=str, required=True, help="Path to dataset.yaml")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument("--batch", type=int, default=8, help="Batch size")
