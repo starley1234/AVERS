@@ -466,6 +466,14 @@ async def get_result(file_id: str):
     raise HTTPException(404, "Result not found - run processing first")
 
 
+def _viz_cache_path(file_id: str, kind: str, page: int = 0) -> "Path":
+    """Путь к кэшу визуализации. Версия = mtime результата обработки:
+    перепроцессили файл - кэш автоматически invalidated."""
+    result_path = RESULTS_DIR / f"{file_id}.json"
+    ver = int(result_path.stat().st_mtime) if result_path.exists() else 0
+    return RESULTS_DIR / f"{file_id}_{kind}_p{page}_v{ver}.png"
+
+
 @router.get("/visualization/{file_id}/{stage}")
 async def get_visualization(file_id: str, stage: str, page: int = Query(0, ge=0)):
     """Get visualization for specific stage - enhanced with PDF support."""
@@ -492,7 +500,9 @@ async def get_visualization(file_id: str, stage: str, page: int = Query(0, ge=0)
     except Exception as e:
         raise HTTPException(500, f"Failed to load image: {e}")
     
-    vis_path = RESULTS_DIR / f"{file_id}_vis_{stage}_p{page}.png"
+    vis_path = _viz_cache_path(file_id, f"vis_{stage}", page)
+    if vis_path.exists():
+        return FileResponse(str(vis_path))  # кэш - мгновенный отклик при повторных кликах
     
     try:
         if stage == "tiles":
@@ -648,7 +658,9 @@ async def get_vectorization_substep(file_id: str, substep: str, page: int = Quer
     except Exception as e:
         raise HTTPException(500, f"Failed to load image: {e}")
     
-    vis_path = RESULTS_DIR / f"{file_id}_vec_{substep}_p{page}.png"
+    vis_path = _viz_cache_path(file_id, f"vec_{substep}", page)
+    if vis_path.exists():
+        return FileResponse(str(vis_path))
     
     try:
         from avers.web.visualization import visualize_vectorization_steps
@@ -699,7 +711,9 @@ async def get_diff_visualization(
     except Exception as e:
         raise HTTPException(500, f"Failed to load image: {e}")
     
-    vis_path = RESULTS_DIR / f"{file_id}_diff_{mode}_p{page}.png"
+    vis_path = _viz_cache_path(file_id, f"diff_{mode}", page)
+    if vis_path.exists():
+        return FileResponse(str(vis_path))
     
     try:
         from avers.web.visualization import visualize_diff_original_vs_vectorized

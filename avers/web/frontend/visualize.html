@@ -78,6 +78,18 @@ body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); h
 #graphSvgBox {position:absolute; inset:0; display:none; overflow:auto; background:#0b0b0e}
 .placeholder {position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:13px; text-align:center; padding:20px}
 
+.pane-spinner {position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:none; flex-direction:column; align-items:center; gap:10px; z-index:8;
+  background:rgba(10,10,11,0.85); border:1px solid var(--border2); border-radius:12px; padding:18px 26px; font-size:12px; color:var(--text2)}
+.spinner {width:34px; height:34px; border:3px solid var(--bg4); border-top-color:var(--accent); border-radius:50%; animation:spin 0.9s linear infinite}
+@keyframes spin {to {transform:rotate(360deg)}}
+
+#loadingOverlay {position:absolute; inset:0; display:none; align-items:center; justify-content:center; z-index:20; background:rgba(8,8,10,0.75)}
+#loadingOverlay .card {background:var(--bg2); border:1px solid var(--border2); border-radius:14px; padding:26px 40px; text-align:center; min-width:320px}
+#loadingOverlay .title {font-size:15px; font-weight:700; margin-bottom:6px}
+#loadingOverlay .sub {font-size:12px; color:var(--text2); margin-bottom:16px; min-height:16px}
+#loadingOverlay .bar {height:6px; background:var(--bg4); border-radius:3px; overflow:hidden}
+#loadingOverlay .bar > div {height:100%; width:0%; background:var(--accent); border-radius:3px; transition:width 0.5s}
+
 .list-item {padding:8px 10px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; font-size:12px; margin-bottom:6px}
 .item-top {display:flex; justify-content:space-between; align-items:center}
 .item-title {font-weight:600}
@@ -184,6 +196,17 @@ pre.json {font-size:10px; font-family:'JetBrains Mono',monospace; white-space:pr
       </div>
 
       <div class="placeholder" id="placeholderGlobal" style="display:none; background:#08080a">—</div>
+
+      <div class="pane-spinner" id="paneSpinner"><div class="spinner"></div><div id="paneSpinnerText">Генерация стадии... (может занять до минуты)</div></div>
+
+      <div id="loadingOverlay">
+        <div class="card">
+          <div class="spinner" style="margin:0 auto 14px"></div>
+          <div class="title" id="loadTitle">Обработка</div>
+          <div class="sub" id="loadSub">—</div>
+          <div class="bar"><div id="loadBar"></div></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -255,6 +278,25 @@ function bindDragDrop() {
 
 function vizStatus(t) { document.getElementById('statusText').textContent = t; }
 
+function showLoading(title, sub) {
+  document.getElementById('loadTitle').textContent = title;
+  document.getElementById('loadSub').textContent = sub || '';
+  document.getElementById('loadBar').style.width = '5%';
+  document.getElementById('loadingOverlay').style.display = 'flex';
+}
+function updateLoading(title, sub, pct) {
+  if (title !== undefined) document.getElementById('loadTitle').textContent = title;
+  if (sub !== undefined) document.getElementById('loadSub').textContent = sub;
+  if (pct !== undefined) document.getElementById('loadBar').style.width = Math.max(5, Math.min(100, pct)) + '%';
+}
+function hideLoading() { document.getElementById('loadingOverlay').style.display = 'none'; }
+
+function showPaneSpinner(text) {
+  document.getElementById('paneSpinnerText').textContent = text || 'Генерация стадии... (может занять до минуты)';
+  document.getElementById('paneSpinner').style.display = 'flex';
+}
+function hidePaneSpinner() { document.getElementById('paneSpinner').style.display = 'none'; }
+
 // ---------------- Upload / process ----------------
 async function handleUpload(file) {
   try {
@@ -266,8 +308,22 @@ async function handleUpload(file) {
     const data = await res.json();
     state.fileId = data.file_id;
     state.isPDF = !!data.is_pdf;
+
+    // Сразу показываем оригинал - файл "видимо" загрузился
+    hideAll();
+    document.getElementById('graphSvgBox').style.display = 'none';
+    document.getElementById('paneStage').style.display = 'flex';
+    const ph = document.getElementById('placeholderStage');
+    if (ph) ph.style.display = 'none';
+    const il = document.getElementById('imgLeft'), ir = document.getElementById('imgRight');
+    il.onerror = null; ir.onerror = null;
+    il.src = `/api/image/${state.fileId}`; il.style.display = 'block';
+    ir.src = `/api/image/${state.fileId}`; ir.style.display = 'block';
+    document.getElementById('labelRight').textContent = 'Оригинал';
+    document.getElementById('errRight').style.display = 'none';
+
     await loadOrProcess();
-  } catch(e) { vizStatus('Ошибка: ' + e); }
+  } catch(e) { vizStatus('Ошибка: ' + e); hideLoading(); }
 }
 
 async function loadOrProcess() {
@@ -281,16 +337,28 @@ async function loadOrProcess() {
   const pr = await fetch(`/api/process/${state.fileId}`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
   });
-  if (!pr.ok) { vizStatus('Не удалось запустить обработку: ' + pr.status); return; }
+  if (!pr.ok) { hideLoading(); vizStatus('Не удалось запустить обработку: ' + pr.status); return; }
   const pj = await pr.json();
+
+  showLoading('Обработка схемы', 'Запуск пайплайна...');
+  let lastPct = 5;
   while (true) {
-    await new Promise(s=>setTimeout(s, 1000));
+    await new Promise(s=>setTimeout(s, 800));
     let st;
     try { st = await (await fetch(`/api/status/${pj.job_id}`)).json(); } catch(e) { continue; }
+    if (st.progress != null) lastPct = Math.max(lastPct, st.progress);
+    updateLoading('Обработка схемы', st.current_stage || '...', lastPct);
     vizStatus(`Обработка: ${st.current_stage || '...'} ${st.progress != null ? st.progress + '%' : ''}`);
-    if (st.status === 'completed') break;
-    if (st.status === 'failed') { vizStatus('Ошибка обработки: ' + (st.errors||[]).join(', ')); return; }
+    if (st.status === 'completed') { updateLoading('Обработка схемы', 'Готово', 100); break; }
+    if (st.status === 'failed') {
+      hideLoading();
+      vizStatus('Ошибка обработки: ' + (st.errors||[]).join(', '));
+      return;
+    }
   }
+  await new Promise(s=>setTimeout(s, 400));
+  hideLoading();
+
   r = await fetch(`/api/result/${state.fileId}`);
   if (r.ok) {
     applyManifest(await r.json());
@@ -383,14 +451,16 @@ function setRightImage(url, name) {
   const err = document.getElementById('errRight');
   err.style.display = 'none';
   img.style.opacity = '1';
+  showPaneSpinner(`Генерация стадии «${name}»... (может занять до минуты)`);
   img.onerror = () => {
+    hidePaneSpinner();
     img.style.display = 'none';
     document.getElementById('errRightText').textContent =
       `Стадия «${name}» недоступна (файл не обработан или ошибка сервера)`;
     err.style.display = 'flex';
     vizStatus(`Ошибка загрузки стадии «${name}»`);
   };
-  img.onload = () => { err.style.display = 'none'; vizStatus('Готово'); };
+  img.onload = () => { hidePaneSpinner(); err.style.display = 'none'; vizStatus('Готово'); };
   img.src = url;
   img.style.display = 'block';
 }
@@ -445,7 +515,9 @@ function setView(view, el) {
     const bottom = document.getElementById('sliderBottom');
     const top = document.getElementById('sliderTop');
     bottom.src = `/api/image/${state.fileId}`;
-    top.onerror = () => { vizStatus('Стадия не загрузилась — слайдер недоступен'); };
+    showPaneSpinner('Генерация стадии для сравнения...');
+    top.onload = () => hidePaneSpinner();
+    top.onerror = () => { hidePaneSpinner(); vizStatus('Стадия не загрузилась — слайдер недоступен'); };
     top.src = stageUrl(state.currentStage);
     state.sliderPos = 50;
     applySlider(50);
