@@ -1,0 +1,78 @@
+# AVERS Requirements
+# Automated Vectorization and Recognition of Schematics
+
+# Core dependencies
+numpy>=1.24.0
+scipy>=1.11.0
+networkx>=3.2.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+PyYAML>=6.0.1
+
+# Computer Vision
+opencv-python>=4.8.0
+opencv-python-headless>=4.8.0
+scikit-image>=0.22.0
+Pillow>=10.0.0
+
+# XML export
+lxml>=4.9.0
+
+# Progress bars
+tqdm>=4.66.0
+
+# Web UI
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+
+# PDF support
+PyMuPDF>=1.23.0
+reportlab>=4.0.0  # For creating test PDFs and synthetic PDF export
+
+# Optional ML (for production)
+# ultralytics>=8.0.0
+# sahi>=0.11.0
+# transformers>=4.35.0
+# faiss-cpu>=1.7.0
+# pdf2image>=1.16.0  # Alternative PDF backend (needs poppler)
+
+# ============================================
+# Optional: Machine Learning (uncomment as needed)
+# ============================================
+
+# Detection (Stage 2) - RT-DETR / YOLO
+# ultralytics>=8.0.0
+
+# SAHI for tiled inference
+# sahi>=0.11.0
+
+# OCR (Stage 3) - PaddleOCR
+# paddleocr>=2.7.0
+# paddlepaddle>=2.5.0
+
+# Alternative OCR
+# easyocr>=1.7.0
+
+# VLM (Stage 6) - Vision Language Models
+# transformers>=4.35.0
+# accelerate>=0.25.0
+# torch>=2.1.0
+# bitsandbytes>=0.41.0  # Quantization
+
+# ============================================
+# Development / Testing
+# ============================================
+
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Code quality
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.7.0
+ruff>=0.1.0
+
+# Visualization (optional)
+matplotlib>=3.8.0
+plotly>=5.18.0

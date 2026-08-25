@@ -1,0 +1,115 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "avers"
+version = "0.1.0"
+description = "Automated Vectorization and Recognition of Schematics"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "AVERS Development Team"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "networkx>=3.2.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "PyYAML>=6.0.1",
+    "opencv-python>=4.8.0",
+    "scikit-image>=0.22.0",
+    "Pillow>=10.0.0",
+    "lxml>=4.9.0",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.7.0",
+    "ruff>=0.1.0",
+]
+viz = [
+    "matplotlib>=3.8.0",
+    "plotly>=5.18.0",
+]
+web = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "python-multipart>=0.0.6",
+    "PyMuPDF>=1.23.0",
+]
+pdf = [
+    "PyMuPDF>=1.23.0",
+    "pdf2image>=1.16.0",
+    "reportlab>=4.0.0",
+]
+ml = [
+    "ultralytics>=8.0.0",
+    "sahi>=0.11.0",
+    "paddleocr>=2.7.0",
+    "transformers>=4.35.0",
+    "torch>=2.1.0",
+    "faiss-cpu>=1.7.0",
+]
+rag = [
+    "transformers>=4.35.0",
+    "faiss-cpu>=1.7.0",
+    "sentence-transformers>=2.2.0",
+]
+dataset = [
+    "ultralytics>=8.0.0",
+]
+all = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "python-multipart>=0.0.6",
+    "ultralytics>=8.0.0",
+    "sahi>=0.11.0",
+    "transformers>=4.35.0",
+    "faiss-cpu>=1.7.0",
+]
+
+[project.scripts]
+avers = "avers.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["avers*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
