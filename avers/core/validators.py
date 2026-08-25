@@ -563,6 +563,7 @@ class PipelineResult:
     manifest: AVERSManifest
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    title_block_region: Optional[List[int]] = None
     stage_timings: Dict[str, float] = field(default_factory=dict)
     success: bool = True
 
@@ -626,10 +627,23 @@ class ProductionPipeline:
             )
         )
         
+        # Stage 0: основная надпись (штамп) - исключаем её регион из OCR и векторизации,
+        # иначе сетка таблицы порождает сотни фантомных линий и "цепей"
+        tb_region = self._resolve_title_block_region(image)
+        if tb_region:
+            result.title_block_region = list(tb_region)
+            result.warnings.append(
+                f"Основная надпись (штамп) найдена в области {tb_region} - "
+                f"исключена из OCR и векторизации (отключить: preprocess.title_block_mask: false)"
+            )
+
         # Stage 1: Detection
         stage_start = time.time()
         try:
             detections, component_bboxes = self._run_detection(image, result)
+            if tb_region:
+                from avers.core.title_block import filter_out_region
+                detections, component_bboxes = filter_out_region(detections, component_bboxes, tb_region)
             result.manifest.components = self._group_components(detections)
         except Exception as e:
             result.errors.append(f"Detection failed: {e}")
@@ -642,6 +656,9 @@ class ProductionPipeline:
         stage_start = time.time()
         try:
             texts, text_bboxes = self._run_ocr(image, result)
+            if tb_region:
+                from avers.core.title_block import filter_out_region
+                texts, text_bboxes = filter_out_region(texts, text_bboxes, tb_region)
             # Associate texts with components
             self._associate_texts(result.manifest.components, texts)
         except Exception as e:
@@ -655,9 +672,12 @@ class ProductionPipeline:
         # Stage 3: Vectorization
         stage_start = time.time()
         try:
+            exclusions = component_bboxes + text_bboxes
+            if tb_region:
+                exclusions.append(tb_region)
             segments, junctions = self._run_vectorization(
                 image,
-                component_bboxes + text_bboxes
+                exclusions
             )
         except Exception as e:
             result.errors.append(f"Vectorization failed: {e}")
@@ -733,6 +753,28 @@ class ProductionPipeline:
             )
             return str(best)
         return mp
+
+    def _resolve_title_block_region(self, image: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+        """Регион основной надписи (штампа) согласно настройкам preprocess."""
+        pre = getattr(self.config, "preprocess", None)
+        if pre is None or not pre.title_block_mask or pre.title_block_mode == "off":
+            return None
+        if pre.title_block_mode == "manual":
+            region = None
+            try:
+                from avers.core.title_block import region_from_fractions
+                region = region_from_fractions(image.shape, pre.title_block_region or [])
+            except Exception as e:
+                logger.warning(f"Не удалось разобрать preprocess.title_block_region: {e}")
+            if region is None:
+                logger.warning("preprocess.title_block_mode='manual', но region не задан/некорректен")
+            return region
+        try:
+            from avers.core.title_block import find_title_block
+            return find_title_block(image)
+        except Exception as e:
+            logger.warning(f"Автопоиск штампа не удался: {e}")
+            return None
 
     def _run_detection(
         self, image: np.ndarray, result: "PipelineResult"

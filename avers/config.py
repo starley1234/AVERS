@@ -162,6 +162,22 @@ class DatasetConfig(BaseModel):
     enable_noise: bool = Field(default=True)
 
 
+class PreprocessConfig(BaseModel):
+    """Предобработка листа (до стадий детекции/OCR/векторизации)."""
+    title_block_mask: bool = Field(
+        default=True,
+        description="Маскировать основную надпись (штамп) - исключить её регион из OCR и векторизации"
+    )
+    title_block_mode: str = Field(
+        default="auto",
+        description="'auto' - найти штамп эвристикой, 'manual' - брать title_block_region, 'off' - не маскировать"
+    )
+    title_block_region: Optional[List[float]] = Field(
+        default=None,
+        description="Для mode='manual': [x1,y1,x2,y2] в долях страницы 0..1, напр. [0.6, 0.8, 0.99, 0.99]"
+    )
+
+
 class TrainingConfig(BaseModel):
     """Training configuration."""
     model_type: str = Field(default="rtdetr-l")
@@ -197,6 +213,8 @@ class AVERSConfig(BaseModel):
     graph_synthesis: GraphSynthesisConfig = Field(default_factory=GraphSynthesisConfig)
     vlm_arbitrator: VLMArbitratorConfig = Field(default_factory=VLMArbitratorConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+
+    preprocess: PreprocessConfig = Field(default_factory=PreprocessConfig)
 
     # New in v0.2
     vision_rag: VisionRAGConfig = Field(default_factory=VisionRAGConfig)

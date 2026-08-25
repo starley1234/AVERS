@@ -115,6 +115,7 @@ python -m avers dataset train --data /tmp/avers_dataset/dataset.yaml \
 
 | Симптом | Что крутить в `config.yaml` |
 |---|---|
+| **Штамп (основная надпись)** создаёт мусорные «цепи» из сетки таблицы и тексты | Авто-маска включена по умолчанию (`preprocess.title_block_mask: true`): регион штампа исключается из OCR и векторизации, в «Проверках» появится запись. Штамп не находится или нужен другой регион — `preprocess.title_block_mode: manual` + `title_block_region: [x1,y1,x2,y2]` (доли листа) |
 | Концы проводов «не дотягиваются» до пинов | `graph_synthesis.snap_radius` и `vectorization.snap_radius` (по умолчанию 15 px; для сканов 5000+ px ставьте 30–80) |
 | Лишние соединения на перекрёстках | уменьшить `snap_radius`; включить VLM-арбитраж (раздел 3) — он разрешает «соединение/проход мимо» |
 | Текст не привязывается к компонентам | `graph_synthesis.text_association_radius` (50 px → 100–200 для крупных листов) |

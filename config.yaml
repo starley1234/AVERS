@@ -16,6 +16,13 @@ slicing:
   target_stride: null          # Override stride calculation
   min_tile_area: 100           # Minimum tile area to process
 
+# Предобработка листа
+preprocess:
+  title_block_mask: true        # Маскировать основную надпись (штамп): сетка таблицы
+                                # иначе порождает фантомные линии и "цепи"
+  title_block_mode: auto        # auto | manual | off
+  title_block_region: null      # для manual: [x1,y1,x2,y2] в долях страницы, напр. [0.6, 0.8, 0.99, 0.99]
+
 # Stage 2: Object Detection (RT-DETR/YOLO)
 detection:
   model_path: null             # Веса ОБУЧЕННОЙ модели, напр. /tmp/avers_runs/avers_yolo/weights/best.pt
