@@ -55,6 +55,17 @@ fi
 
 info "Python: $($PY_SYSTEM --version 2>&1), репозиторий: $ROOT"
 
+# Выбор python: .venv репозитория > venv репозитория > активированный venv > системный
+if [ -x "$VENV/bin/python" ]; then
+  PY="$VENV/bin/python"
+elif [ -x "$ROOT/venv/bin/python" ]; then
+  PY="$ROOT/venv/bin/python"
+elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PY="$VIRTUAL_ENV/bin/python"
+else
+  PY="$PY_SYSTEM"
+fi
+
 if [ "$SKIP_INSTALL" = "0" ]; then
   if [ ! -x "$VENV/bin/python" ]; then
     info "Создаю виртуальное окружение $VENV ..."
@@ -68,10 +79,6 @@ if [ "$SKIP_INSTALL" = "0" ]; then
   "$VENV/bin/pip" install --upgrade pip -q
   "$VENV/bin/pip" install -r "$ROOT/requirements.txt" -q || { err "pip install -r requirements.txt не удался"; exit 1; }
 else
-  # Используем готовое окружение
-  if [ -x "$VENV/bin/python" ]; then PY="$VENV/bin/python";
-  elif [ -x "$ROOT/venv/bin/python" ]; then PY="$ROOT/venv/bin/python";
-  else PY="$PY_SYSTEM"; fi
   info "--skip-install: использую $PY без изменений"
 fi
 
