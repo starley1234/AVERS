@@ -3,11 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>АВЕРС — Визуализация процесса · Diff + 3D</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
-<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
-<script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+<title>АВЕРС — Визуализация стадий</title>
 <style>
 :root {
   --bg:#0a0a0b; --bg2:#141416; --bg3:#1c1c1f; --bg4:#26262b;
@@ -18,786 +14,248 @@
 }
 * {margin:0;padding:0;box-sizing:border-box}
 body {font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; overflow:hidden}
-.header {min-height:56px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; padding:4px 20px; flex-shrink:0; flex-wrap:wrap}
-.logo {display:flex; align-items:center; gap:12px; font-weight:700; font-size:18px}
-.logo-mark {width:32px;height:32px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white}
-.btn {height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;transition:all 0.15s}
-.btn:hover {background:var(--bg4);border-color:var(--border2)}
-.btn-primary {background:var(--accent);border-color:var(--accent);color:white}
-.btn-primary:hover {background:var(--accent2)}
-.btn-sm {height:26px;padding:0 10px;font-size:11px}
-.btn:disabled {opacity:0.5}
+.header {min-height:56px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; padding:4px 20px; flex-wrap:wrap; flex-shrink:0}
+.logo {display:flex; align-items:center; gap:12px; font-weight:700; font-size:16px}
+.logo-mark {width:28px;height:28px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800}
+.btn {height:32px; padding:0 14px; border-radius:8px; border:1px solid var(--border); background:var(--bg3); color:var(--text); font-size:13px; cursor:pointer; font-family:inherit}
+.btn:hover {border-color:var(--border2)}
+.btn-primary {background:var(--accent); border-color:var(--accent); color:white}
+.btn.active {background:var(--accent); border-color:var(--accent); color:white}
 
-/* Stepper */
-.stepper {height:72px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:0;overflow-x:auto;flex-shrink:0}
-.step {display:flex;align-items:center;gap:12px;padding:0 20px;height:100%;cursor:pointer;border-bottom:3px solid transparent;transition:all 0.2s;flex-shrink:0}
-.step:hover {background:var(--bg3)}
-.step.active {border-bottom-color:var(--accent); background:rgba(108,92,255,0.08)}
-.step.done {border-bottom-color:var(--green)}
-.step.done .step-icon {background:var(--green);color:white}
-.step.active .step-icon {background:var(--accent);color:white}
-.step-icon {width:36px;height:36px;border-radius:10px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
-.step-info {display:flex;flex-direction:column;gap:2px}
-.step-name {font-size:13px;font-weight:600}
-.step-desc {font-size:11px;color:var(--text2)}
-.step-time {font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text2);background:var(--bg3);padding:2px 6px;border-radius:4px;margin-top:2px;display:inline-block;width:fit-content}
-.step-arrow {color:var(--border2); font-size:20px; margin:0 4px;flex-shrink:0}
+.stepper {display:flex; gap:4px; padding:8px 16px; background:var(--bg2); border-bottom:1px solid var(--border); overflow-x:auto; flex-shrink:0}
+.step {display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:8px; border:1px solid var(--border); cursor:pointer; min-width:130px; background:var(--bg3)}
+.step:hover {border-color:var(--border2)}
+.step.active {border-color:var(--accent); background:rgba(108,92,255,0.12)}
+.step.done {opacity:0.75}
+.step-icon {font-size:18px}
+.step-name {font-size:12px; font-weight:600}
+.step-desc {font-size:10px; color:var(--text2)}
+.step-arrow {color:var(--text3); align-self:center; flex-shrink:0}
 
-/* Main */
-.main {flex:1;display:flex;overflow:hidden}
+.main {flex:1; display:flex; overflow:hidden}
+.sidebar {width:280px; background:var(--bg2); border-right:1px solid var(--border); overflow-y:auto; padding:12px; flex-shrink:0}
+.sidebar-right {width:320px; background:var(--bg2); border-left:1px solid var(--border); overflow-y:auto; padding:12px; flex-shrink:0}
+.section {margin-bottom:16px}
+.section-label {font-size:10px; color:var(--text2); text-transform:uppercase; font-weight:600; letter-spacing:0.5px; margin-bottom:8px}
+.detail-text {font-size:11px; color:var(--text2); line-height:1.6; white-space:normal}
+.metric-grid {display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.metric {background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:10px}
+.metric-value {font-size:20px; font-weight:700}
+.metric-label {font-size:10px; color:var(--text2); margin-top:2px}
+.legend-item {display:flex; align-items:center; gap:6px; font-size:11px; padding:3px 0}
+.legend-dot {width:10px; height:10px; border-radius:50%}
+.legend-count {margin-left:auto; color:var(--text2)}
 
-/* Sidebars */
-.sidebar {width:340px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
-.sidebar-right {width:380px;border-right:none;border-left:1px solid var(--border)}
-.sidebar-header {padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
-.sidebar-title {font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text2)}
-.sidebar-content {flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:20px}
-.section {display:flex;flex-direction:column;gap:10px}
-.section-label {font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3)}
+.stage-area {flex:1; display:flex; flex-direction:column; overflow:hidden; background:#08080a}
+.toolbar {height:44px; background:var(--bg2); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 12px; gap:8px; flex-shrink:0; flex-wrap:wrap}
+.tool-btn {height:28px; padding:0 12px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--text2); cursor:pointer; font-size:12px; font-family:inherit}
+.tool-btn:hover {color:var(--text)}
+.tool-btn.active {background:var(--accent); color:white}
+.tool-sep {width:1px; height:18px; background:var(--border)}
+.status-text {font-size:11px; color:var(--text2); margin-left:auto}
 
-/* Vis steps */
-.vis-steps {display:flex;flex-direction:column;gap:8px}
-.vis-step {display:flex;gap:10px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all 0.15s}
-.vis-step:hover {border-color:var(--border2);background:var(--bg4)}
-.vis-step.active {border-color:var(--accent);background:rgba(108,92,255,0.08)}
-.vis-step-icon {width:32px;height:32px;border-radius:8px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
-.vis-step.active .vis-step-icon {background:var(--accent);color:white}
-.vis-step-info {flex:1}
-.vis-step-name {font-size:12px;font-weight:500}
-.vis-step-desc {font-size:10px;color:var(--text2);margin-top:2px;line-height:1.4}
+.canvas-wrap {flex:1; position:relative; overflow:hidden; background:#08080a}
+.pane {position:absolute; inset:0; display:flex}
+.pane-single {position:absolute; inset:0; display:none; align-items:center; justify-content:center}
+.canvas-box {flex:1; position:relative; overflow:hidden; display:flex; align-items:center; justify-content:center; cursor:grab}
+.canvas-box:active {cursor:grabbing}
+.canvas-box img {max-width:100%; max-height:100%; transform-origin:center center; user-select:none; -webkit-user-drag:none}
+.pane-label {position:absolute; top:12px; left:12px; background:rgba(0,0,0,0.7); padding:4px 10px; border-radius:6px; font-size:10px; font-weight:600; border:1px solid var(--border)}
+.pane-label.right {left:auto; right:12px}
+.error-pane {position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px; color:var(--text2); font-size:13px; text-align:center; padding:20px}
+.error-pane .btn {height:auto; padding:8px 14px}
 
-/* Canvas */
-.canvas-wrap {flex:1;display:flex;flex-direction:column;background:#08080a;position:relative;overflow:hidden}
-.canvas-toolbar {height:44px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:8px;flex-shrink:0;flex-wrap:wrap}
-.toolbar-group {display:flex;align-items:center;gap:4px;padding:0 8px;border-right:1px solid var(--border)}
-.toolbar-group:last-child {border-right:none}
-.tool-btn {height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;font-family:inherit;gap:4px}
-.tool-btn:hover {background:var(--bg4);color:var(--text)}
-.tool-btn.active {background:var(--accent);color:white;border-color:var(--accent)}
+/* Слайдер-сравнение */
+.slider-box {position:absolute; inset:0; display:none; align-items:center; justify-content:center; overflow:hidden}
+.slider-box img {position:absolute; max-width:94%; max-height:94%; user-select:none; -webkit-user-drag:none}
+#sliderTop {clip-path: inset(0 50% 0 0)}
+.slider-handle {position:absolute; top:0; bottom:0; width:3px; background:var(--accent); cursor:ew-resize; z-index:5}
+.slider-handle::after {content:'⟺'; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--accent); color:white; width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:14px}
+.opacity-row {display:none; align-items:center; gap:8px}
+.opacity-row input {width:140px}
 
-/* Split and diff */
-.split {flex:1;display:flex;overflow:hidden}
-.split-pane {flex:1;position:relative;overflow:hidden;border-right:1px solid var(--border);display:flex;flex-direction:column}
-.split-pane:last-child {border-right:none}
-.split-label {height:28px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text2);gap:8px;flex-shrink:0}
-.split-canvas {flex:1;position:relative;overflow:hidden;cursor:grab;background:#08080a}
-.split-canvas img {position:absolute;max-width:none;transform-origin:0 0;user-select:none;pointer-events:none}
-.split-canvas:active {cursor:grabbing}
+/* Граф */
+#graphSvgBox {position:absolute; inset:0; display:none; overflow:auto; background:#0b0b0e}
+.placeholder {position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:13px; text-align:center; padding:20px}
 
-/* Diff slider */
-.diff-container {position:relative;width:100%;height:100%;overflow:hidden;user-select:none}
-.diff-img {position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
-.diff-overlay {position:absolute;top:0;left:0;width:50%;height:100%;overflow:hidden;border-right:3px solid var(--accent);will-change:width}
-.diff-handle {position:absolute;top:50%;left:50%;width:48px;height:48px;background:var(--accent);border:3px solid white;border-radius:50%;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;color:white;font-size:18px;cursor:ew-resize;box-shadow:0 8px 24px rgba(0,0,0,0.5);z-index:10;will-change:left}
-.diff-label {position:absolute;top:12px;padding:6px 12px;background:rgba(0,0,0,0.7);color:white;border-radius:6px;font-size:11px;font-weight:600;backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.1)}
-.diff-label-left {left:12px}
-.diff-label-right {right:12px}
-
-/* Graph */
-.graph-wrap {flex:1;position:relative;background:var(--bg);overflow:hidden}
-#graphNetwork {width:100%;height:100%}
-#graph3D {width:100%;height:100%;display:block}
-
-/* Playback */
-.playback {height:56px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:16px;flex-shrink:0}
-.playback-btn {width:40px;height:40px;border-radius:10px;background:var(--accent);border:none;color:white;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.playback-slider {flex:1;height:4px;background:var(--bg4);border-radius:100px;position:relative;cursor:pointer}
-.playback-progress {height:100%;background:var(--accent);border-radius:100px;transition:width 0.3s}
-.playback-time {font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text2)}
-
-/* Metrics */
-.metrics {display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.metric {background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
-.metric-label {font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em}
-.metric-value {font-size:18px;font-weight:700;margin-top:4px;font-family:'JetBrains Mono',monospace}
-.metric-sub {font-size:10px;color:var(--text2);margin-top:2px}
-.legend {display:flex;flex-direction:column;gap:6px}
-.legend-item {display:flex;align-items:center;gap:8px;font-size:11px}
-.legend-dot {width:12px;height:12px;border-radius:3px;flex-shrink:0}
-.legend-count {margin-left:auto;font-family:'JetBrains Mono',monospace;background:var(--bg3);padding:1px 6px;border-radius:100px;font-size:10px}
-.json-view {background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:10px;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all}
-.empty {padding:32px 16px;text-align:center;color:var(--text2)}
-.tabs {display:flex;gap:2px;background:var(--bg3);padding:3px;border-radius:8px;border:1px solid var(--border)}
-.tab {flex:1;height:28px;border-radius:6px;border:none;background:transparent;color:var(--text2);font-size:12px;font-weight:500;cursor:pointer;font-family:inherit}
-.tab.active {background:var(--bg4);color:var(--text)}
+.list-item {padding:8px 10px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; font-size:12px; margin-bottom:6px}
+.item-top {display:flex; justify-content:space-between; align-items:center}
+.item-title {font-weight:600}
+.item-badge {font-size:10px; background:var(--bg4); padding:2px 8px; border-radius:100px}
+.item-meta {font-size:10px; color:var(--text2); margin-top:4px; word-break:break-all}
+.empty {color:var(--text2); font-size:12px; text-align:center; padding:16px}
+pre.json {font-size:10px; font-family:'JetBrains Mono',monospace; white-space:pre-wrap; word-break:break-all; color:var(--text2); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:10px; max-height:60vh; overflow:auto}
 </style>
 </head>
 <body>
 
 <div class="header">
-  <div class="logo"><div class="logo-mark">A</div> АВЕРС — Визуализация · Diff + 3D</div>
-  <input type="file" id="vizFile" accept=".tif,.tiff,.png,.jpg,.jpeg,.bmp,.pdf" style="display:none" onchange="if(this.files[0]) handleUpload(this.files[0])">
-  <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;max-width:70%">
-    <button class="btn btn-primary" onclick="document.getElementById('vizFile').click()">📂 Загрузить скан</button>
-    <span id="vizHint" style="color:var(--text2);font-size:11px">или перетащите файл в окно</span>
+  <div class="logo"><div class="logo-mark">A</div> АВЕРС — Визуализация стадий</div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span id="vizHint" style="color:var(--text2);font-size:11px">перетащите файл в окно</span>
+    <input type="file" id="vizFile" accept=".tif,.tiff,.png,.jpg,.jpeg,.bmp,.pdf" style="display:none" onchange="if(this.files[0]) handleUpload(this.files[0])">
     <button class="btn" onclick="location.href='/'">← Валидатор</button>
     <button class="btn" onclick="location.href='/annotator'">✏️ Аннотатор</button>
-    <button class="btn" onclick="window.open('/docs','_blank')">API</button>
-    <button class="btn" onclick="generateReport()">📄 Отчет</button>
+    <button class="btn" onclick="generateReport()">📄 Отчёт</button>
+    <button class="btn btn-primary" onclick="document.getElementById('vizFile').click()">📂 Загрузить скан</button>
   </div>
 </div>
 
-<div class="stepper" id="stepper">
-  <div class="step active" data-step="0" onclick="goToStep(0)"><div class="step-icon">📄</div><div class="step-info"><div class="step-name">Исходник</div><div class="step-desc">TIF/PNG/PDF</div><div class="step-time">—</div></div></div>
-  <div class="step-arrow">→</div>
-  <div class="step" data-step="1" onclick="goToStep(1)"><div class="step-icon">◫</div><div class="step-info"><div class="step-name">SAHI</div><div class="step-desc">1024 tiles</div><div class="step-time" id="time-slicing">—</div></div></div>
-  <div class="step-arrow">→</div>
-  <div class="step" data-step="2" onclick="goToStep(2)"><div class="step-icon">◈</div><div class="step-info"><div class="step-name">Детекция</div><div class="step-desc">RT-DETR 10 классов</div><div class="step-time" id="time-detection">—</div></div></div>
-  <div class="step-arrow">→</div>
-  <div class="step" data-step="3" onclick="goToStep(3)"><div class="step-icon">T</div><div class="step-info"><div class="step-name">OCR</div><div class="step-desc">PaddleOCR</div><div class="step-time" id="time-ocr">—</div></div></div>
-  <div class="step-arrow">→</div>
-  <div class="step" data-step="4" onclick="goToStep(4)"><div class="step-icon">〰</div><div class="step-info"><div class="step-name">Векторизация</div><div class="step-desc">Skeleton+RDP</div><div class="step-time" id="time-vectorization">—</div></div></div>
-  <div class="step-arrow">→</div>
-  <div class="step" data-step="5" onclick="goToStep(5)"><div class="step-icon">⬡</div><div class="step-info"><div class="step-name">Граф</div><div class="step-desc">NetworkX</div><div class="step-time" id="time-graph">—</div></div></div>
-  <div class="step-arrow">→</div>
-  <div class="step" data-step="6" onclick="goToStep(6)"><div class="step-icon">◐</div><div class="step-info"><div class="step-name">VLM+RAG</div><div class="step-desc">Qwen-VL+CLIP</div><div class="step-time" id="time-vlm">—</div></div></div>
-  <div class="step-arrow">→</div>
-  <div class="step" data-step="7" onclick="goToStep(7)"><div class="step-icon">✓</div><div class="step-info"><div class="step-name">Netlist</div><div class="step-desc">JSON/XML</div><div class="step-time">—</div></div></div>
-</div>
+<div class="stepper" id="stepper"></div>
 
 <div class="main">
   <div class="sidebar">
-    <div class="sidebar-header"><div class="sidebar-title">Детали стадии</div><div style="display:flex;gap:4px"><button class="btn btn-sm" onclick="toggleSplit()">◫</button></div></div>
-    <div class="sidebar-content">
-      <div class="section" id="stageInfo">
-        <div class="section-label" id="stageLabel">Исходное изображение</div>
-        <div style="font-size:12px;line-height:1.5;color:var(--text2)" id="stageDesc">Зарузите схему. Поддерживается PDF многостраничный. Принцип: никаких черных ящиков, гибридный пайплайн.</div>
+    <div class="section">
+      <div class="section-label">О стадии</div>
+      <div class="detail-text" id="stageDesc">Загрузите скан и выберите стадию слева.</div>
+    </div>
+    <div class="section">
+      <div class="section-label">Метрики</div>
+      <div class="metric-grid">
+        <div class="metric"><div class="metric-value" id="mComp">—</div><div class="metric-label">Компонентов</div></div>
+        <div class="metric"><div class="metric-value" id="mNets">—</div><div class="metric-label">Цепей</div></div>
+        <div class="metric"><div class="metric-value" id="mIssues">—</div><div class="metric-label">На проверку</div></div>
+        <div class="metric"><div class="metric-value" id="mTime">—</div><div class="metric-label">Время, с</div></div>
       </div>
+    </div>
+    <div class="section">
+      <div class="section-label">Легенда ГОСТ</div>
+      <div id="legend" class="detail-text">—</div>
+    </div>
+    <div class="section">
+      <div class="section-label">Предупреждения</div>
+      <div id="warnList" class="detail-text">—</div>
+    </div>
+  </div>
 
-      <div class="section" id="visStepsSection" style="display:none">
-        <div class="section-label">Шаги визуализации</div>
-        <div class="vis-steps" id="visSteps"></div>
+  <div class="stage-area">
+    <div class="toolbar">
+      <button class="tool-btn active" data-view="stage" onclick="setView('stage', this)">Стороны A|B</button>
+      <button class="tool-btn" data-view="slider" onclick="setView('slider', this)">Слайдер</button>
+      <button class="tool-btn" data-view="overlay" onclick="setView('overlay', this)">Наложение</button>
+      <div class="opacity-row" id="opacityRow">
+        <span style="font-size:11px;color:var(--text2)">Прозрачность стадии:</span>
+        <input type="range" min="0" max="100" value="70" id="opacitySlider" oninput="setOpacity(this.value)">
+        <span style="font-size:11px;color:var(--text2)" id="opacityVal">70%</span>
       </div>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" onclick="zoomBy(1.25)">＋</button>
+      <button class="tool-btn" onclick="zoomBy(0.8)">－</button>
+      <button class="tool-btn" onclick="resetView()">Сброс вида</button>
+      <span class="status-text" id="statusText">Готов</span>
+    </div>
 
-      <div class="section" id="diffSection" style="display:none">
-        <div class="section-label">🎚️ Side-by-side Diff — оригинал vs вектор</div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-            <button class="tool-btn active" data-diff="side_by_side" onclick="setDiffMode('side_by_side')">Рядом</button>
-            <button class="tool-btn" data-diff="overlay" onclick="setDiffMode('overlay')">Наложение</button>
-            <button class="tool-btn" data-diff="difference" onclick="setDiffMode('difference')">Разница</button>
-            <button class="tool-btn" data-diff="blend_slider" onclick="setDiffMode('blend_slider')">Слайдер</button>
-            <button class="tool-btn" data-diff="checker" onclick="setDiffMode('checker')">Шахматка</button>
-            <button class="tool-btn" data-diff="final_overlay" onclick="setDiffMode('final_overlay')">Итог</button>
+    <div class="canvas-wrap" id="canvasWrap">
+      <!-- Режим A|B -->
+      <div class="pane" id="paneStage">
+        <div class="canvas-box">
+          <img id="imgLeft" alt="оригинал">
+          <div class="pane-label">Оригинал</div>
+        </div>
+        <div class="canvas-box">
+          <img id="imgRight" alt="стадия">
+          <div class="pane-label right" id="labelRight">Стадия</div>
+          <div class="error-pane" id="errRight">
+            <div id="errRightText">Стадия недоступна</div>
+            <button class="btn" onclick="loadStage(true)">Повторить</button>
           </div>
-          <div style="font-size:10px;color:var(--text2);line-height:1.4">
-            <b>Рядом:</b> две картинки рядом с границей<br>
-            <b>Наложение:</b> 70% оригинал + 30% вектор<br>
-            <b>Разница:</b> зеленый=совпадает, красный=отличается<br>
-            <b>Слайдер:</b> двигайте границу для сравнения<br>
-            <b>Шахматка:</b> квадраты 64×64 чередуются
-          </div>
+        </div>
+        <div class="placeholder" id="placeholderStage">Загрузите скан (кнопка справа сверху) или перетащите файл в окно</div>
+      </div>
+
+      <!-- Режим Слайдер -->
+      <div class="slider-box" id="paneSlider">
+        <img id="sliderBottom" alt="оригинал">
+        <img id="sliderTop" alt="стадия">
+        <div class="slider-handle" id="sliderHandle"></div>
+      </div>
+
+      <!-- Режим Наложение -->
+      <div class="pane-single" id="paneOverlay" style="display:none">
+        <div class="canvas-box" style="position:relative">
+          <img id="overlayBottom" style="position:absolute" alt="оригинал">
+          <img id="overlayTop" style="position:absolute; opacity:0.7" alt="стадия">
         </div>
       </div>
 
-      <div class="section">
-        <div class="section-label">Легенда ГОСТ</div>
-        <div class="legend" id="legend"></div>
+      <!-- Граф (стадия «Граф») -->
+      <div id="graphSvgBox">
+        <svg id="graphSvg" width="100%" height="100%"></svg>
       </div>
 
-      <div class="section">
-        <div class="section-label">Метрики</div>
-        <div class="metrics" id="metrics">
-          <div class="metric"><div class="metric-label">Компонентов</div><div class="metric-value" id="mComp">0</div><div class="metric-sub">УГО</div></div>
-          <div class="metric"><div class="metric-label">Цепей</div><div class="metric-value" id="mNets">0</div><div class="metric-sub">Netlist</div></div>
-          <div class="metric"><div class="metric-label">Время</div><div class="metric-value" id="mTime">0s</div><div class="metric-sub">Общее</div></div>
-          <div class="metric"><div class="metric-label">Проблем</div><div class="metric-value" id="mIssues">0</div><div class="metric-sub">Проверка</div></div>
-        </div>
-      </div>
-
-      <div class="section" id="ragExplain" style="display:none">
-        <div class="section-label">Vision RAG — Объяснение VLM</div>
-        <div style="background:var(--bg3);padding:10px;border-radius:8px;border:1px solid var(--border);font-size:11px;line-height:1.5;color:var(--text2)">
-          <div style="font-weight:600;color:var(--text);margin-bottom:6px">Решение VLM:</div>
-          <div id="ragReasoning">—</div>
-          <div id="ragExamples" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"></div>
-        </div>
-      </div>
+      <div class="placeholder" id="placeholderGlobal" style="display:none; background:#08080a">—</div>
     </div>
   </div>
 
-  <div class="canvas-wrap">
-    <div class="canvas-toolbar">
-      <div class="toolbar-group">
-        <button class="tool-btn" onclick="zoom(1.25)">＋</button>
-        <button class="tool-btn" onclick="zoom(0.8)">－</button>
-        <button class="tool-btn" onclick="fitView()">⤢</button>
-        <span style="font-size:11px;color:var(--text2)" id="zoomLabel">100%</span>
-      </div>
-      <div class="toolbar-group">
-        <button class="tool-btn active" data-mode="image" onclick="setMode('image')">🖼 Изображение</button>
-        <button class="tool-btn" data-mode="diff" onclick="setMode('diff')">🎚️ Diff</button>
-        <button class="tool-btn" data-mode="graph2d" onclick="setMode('graph2d')">⬡ Граф 2D</button>
-        <button class="tool-btn" data-mode="graph3d" onclick="setMode('graph3d')">⬢ Граф 3D</button>
-        <button class="tool-btn" data-mode="split" onclick="setMode('split')">◫ Split</button>
-      </div>
-      <div class="toolbar-group">
-        <span style="font-size:11px;color:var(--text2)" id="coordsLabel">—</span>
-        <span style="font-size:11px;color:var(--text2)" id="infoLabel">Загрузите файл</span>
-      </div>
-      <div class="toolbar-group" id="diffToolbar" style="display:none">
-        <span style="font-size:10px;color:var(--text2)">Diff:</span>
-        <button class="tool-btn active" data-diff="side_by_side" onclick="setDiffMode('side_by_side')">Рядом</button>
-        <button class="tool-btn" data-diff="blend_slider" onclick="setDiffMode('blend_slider')">Слайдер</button>
-        <button class="tool-btn" data-diff="difference" onclick="setDiffMode('difference')">Разница</button>
-      </div>
+  <div class="sidebar-right">
+    <div class="section">
+      <div class="section-label">Результат (манифест)</div>
+      <pre class="json" id="jsonView">—</pre>
     </div>
-
-    <!-- Image mode -->
-    <div class="split" id="imageMode">
-      <div class="split-pane" id="paneLeft">
-        <div class="split-label">Оригинал (raster)</div>
-        <div class="split-canvas" id="canvasLeft"><img id="imgLeft" style="display:none"></div>
-      </div>
-      <div class="split-pane" id="paneRight">
-        <div class="split-label" id="labelRight">Текущая стадия</div>
-        <div class="split-canvas" id="canvasRight"><img id="imgRight" style="display:none"><div class="empty" id="emptyRight">Нажмите «📂 Загрузить скан» (слева сверху)<br>или перетащите файл в окно</div></div>
-      </div>
+    <div class="section">
+      <div class="section-label">Компоненты</div>
+      <div id="compList" class="detail-text">—</div>
     </div>
-
-    <!-- Diff mode with slider -->
-    <div id="diffMode" style="display:none;flex:1;flex-direction:column">
-      <div class="split-label">🎚️ Side-by-side Diff — двигайте слайдер, сравнивайте оригинал vs векторизованный</div>
-      <div style="flex:1;position:relative;background:#08080a;overflow:hidden" id="diffWrap">
-        <div class="diff-container" id="diffContainer">
-          <img class="diff-img" id="diffImgOriginal" style="display:none">
-          <div class="diff-overlay" id="diffOverlay"><img class="diff-img" id="diffImgVector" style="display:none;width:100%"></div>
-          <div class="diff-handle" id="diffHandle">↔</div>
-          <div class="diff-label diff-label-left">ORIGINAL</div>
-          <div class="diff-label diff-label-right">VECTORIZED</div>
-        </div>
-        <div style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);padding:8px 12px;border-radius:8px;display:flex;gap:8px;align-items:center;border:1px solid var(--border)">
-          <span style="font-size:10px;color:var(--text2)">Прозрачность:</span>
-          <input type="range" min="0" max="100" value="70" id="opacitySlider" oninput="setOpacity(this.value)" style="width:120px">
-          <span style="font-size:10px;font-family:'JetBrains Mono'" id="opacityLabel">70%</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Graph 2D -->
-    <div id="graph2DMode" style="display:none;flex:1;flex-direction:column">
-      <div class="split-label">⬡ Граф 2D — перетаскивайте узлы, колесо — зум (vis-network)</div>
-      <div class="graph-wrap"><div id="graphNetwork"></div></div>
-    </div>
-
-    <!-- Graph 3D -->
-    <div id="graph3DMode" style="display:none;flex:1;flex-direction:column">
-      <div class="split-label">⬢ Граф 3D — Three.js · OrbitControls (тяните для вращения, колесо — зум, правый клик — панорама) · Z-слои: разъемы -20/20, компоненты 50, земля -30, провода 10±sin</div>
-      <div class="graph-wrap" style="background:#050508">
-        <canvas id="graph3D"></canvas>
-        <div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.7);padding:10px;border-radius:8px;border:1px solid var(--border);font-size:10px;line-height:1.5">
-          <div style="font-weight:600;margin-bottom:6px">Управление 3D:</div>
-          <div>🖱️ Левая кнопка — вращение</div>
-          <div>🖱️ Колесо — зум</div>
-          <div>🖱️ Правая кнопка — панорама</div>
-          <div>📦 Фиолетовый — разъемы</div>
-          <div>🟡 Желтый — пины</div>
-          <div>🔴 Красный — провода/nets</div>
-          <div style="margin-top:8px"><button class="btn btn-sm" onclick="reset3DView()">↺ Сброс вида</button> <button class="btn btn-sm" onclick="toggle3DAnimation()">⏯ Анимация</button></div>
-        </div>
-        <div style="position:absolute;bottom:12px;left:12px;background:rgba(0,0,0,0.7);padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:10px;font-family:'JetBrains Mono'" id="graph3DStats">—</div>
-      </div>
+    <div class="section">
+      <div class="section-label">Цепи</div>
+      <div id="netList" class="detail-text">—</div>
     </div>
   </div>
-
-  <div class="sidebar sidebar-right">
-    <div class="sidebar-header"><div class="sidebar-title">Результат</div><div class="tabs" style="width:180px"><button class="tab active" data-rtab="json" onclick="switchRightTab('json')">JSON</button><button class="tab" data-rtab="nets" onclick="switchRightTab('nets')">Цепи</button></div></div>
-    <div class="sidebar-content">
-      <div id="rightJson">
-        <div class="section"><div class="section-label">Манифест</div><div class="json-view" id="jsonView">—</div></div>
-        <div class="section"><div class="section-label">Компоненты</div><div id="compList" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow:auto"></div></div>
-      </div>
-      <div id="rightNets" style="display:none">
-        <div class="section"><div class="section-label">Цепи</div><div id="netList" style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto"></div></div>
-        <div class="section"><div class="section-label">Проблемы</div><div id="issueList" style="display:flex;flex-direction:column;gap:6px"></div></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="playback">
-  <button class="playback-btn" id="playBtn" onclick="togglePlay()">▶</button>
-  <div style="display:flex;flex-direction:column;gap:4px;flex:1">
-    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);font-family:'JetBrains Mono'"><span id="playbackLabel">Шаг 0/7 — Исходник</span><span id="playbackTime">—</span></div>
-    <div class="playback-slider" onclick="seek(event)"><div class="playback-progress" id="playbackProgress" style="width:0%"></div></div>
-  </div>
-  <div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="prevStep()">←</button><button class="btn btn-sm" onclick="nextStep()">→</button><button class="btn btn-sm" onclick="generateReport()">📄 Отчет</button></div>
 </div>
 
 <script>
-let state = {
-  fileId: null,
-  manifest: null,
-  currentStep: 0,
-  playing: false,
-  mode: 'image',
-  diffMode: 'blend_slider',
-  graph: null,
-  graph3D: {scene:null, camera:null, renderer:null, controls:null, nodes:[], edges:[], animating:false},
-  zoom: 1,
-  panLeft: {x:0,y:0},
-  panRight: {x:0,y:0},
-};
-
-const STEPS = [
-  {name:'Исходник', desc:'TIF/PNG/PDF', icon:'📄', details:'Нажмите «📂 Загрузить скан» или перетащите файл в окно. PDF многостраничный. Принцип: гибридный пайплайн, не скармливаем 15k×4k в VLM.'},
-  {name:'SAHI', desc:'1024 tiles 0.2', icon:'◫', details:'SAHI: нарезка на тайлы 1024×1024 overlap 0.2, параллельная обработка, NMS. Зеленые области — overlap.'},
-  {name:'Детекция', desc:'RT-DETR 10 классов', icon:'◈', details:'RT-DETRv2-l/YOLOv11x, 10 классов ГОСТ: connector_body, pin, junction_dot, ground, shield, offpage, diode, relay, resistor, capacitor. Обучение на Masala-CHAI 4300 + ElectroNet 3500 + синтетика.'},
-  {name:'OCR', desc:'PaddleOCR ГОСТ', icon:'T', details:'PaddleOCR DBNet++ + SVTR, 0°/90°/270°, regex Х1, БПВЛ, +27В, k-d tree привязка.'},
-  {name:'Векторизация', desc:'Skeleton+RDP', icon:'〰', details:'CV: маска исключений → скелетизация Guo-Hall 1px → Hough+RDP → junctions degree>=3. Binary/masked/skeleton/segments/junctions/final.'},
-  {name:'Граф', desc:'NetworkX+Snapping', icon:'⬡', details:'Snapping R=15px, k-d tree текст, схлопывание цепочек, T-узлы, nets. Интерактивный граф 2D/3D.'},
-  {name:'VLM+RAG', desc:'Qwen-VL+CLIP', icon:'◐', details:'ROI 256×256 при коллизии, Vision RAG: CLIP 512d + FAISS Top-K → few-shot VLM → JSON connected.'},
-  {name:'Netlist', desc:'JSON/XML САПР', icon:'✓', details:'AVERSManifest JSON/XML для Макс-САПР, КОМПАС-Электрик.'},
+const STAGES = [
+  {key:'original',     name:'Исходник',    desc:'Оригинал: TIF/PNG/PDF, страница 1 (или выбранная). Загрузите файл кнопкой справа сверху.', icon:'📄'},
+  {key:'tiles',        name:'SAHI',        desc:'Нарезка листа на тайлы 1024×1024 с перекрытием 0.2. Зелёные зоны — перекрытия, объекты на границах тайлов не теряются.', icon:'◫'},
+  {key:'detection',    name:'Детекция',    desc:'Детекция УГО (классы ГОСТ). Если схема уже обработана — показывается СОХРАНЁННЫЙ результат пайплайна (зелёные рамки, синие пины). Иначе — живой запуск детектора.', icon:'◈'},
+  {key:'ocr',          name:'OCR',         desc:'Распознанный текст (PaddleOCR/EasyOCR или заглушка). Обозначения, номера контактов, типы проводов.', icon:'T'},
+  {key:'vectorization',name:'Векторизация',desc:'Скелетизация → отрезки → соединения. Кнопками ниже выбирайте подстадию: binary, masked, skeleton, segments, junctions, final.', icon:'〰'},
+  {key:'graph',        name:'Граф',        desc:'Граф цепей из манифеста: компоненты (зелёные), пины (синие), трассы цепей (красные). Ниже — списки компонентов и цепей.', icon:'⬡'},
+  {key:'vlm',          name:'VLM+RAG',     desc:'Спорные места для арбитража: фрагменты, отправляемые VLM. Если проблем не найдено — заглушка «No issues».', icon:'◐'},
+  {key:'netlist',      name:'Netlist',     desc:'Итоговый манифест: панель справа (JSON, компоненты, цепи).', icon:'✓'},
 ];
 
 const GOST_COLORS = {
   connector_body:'#6c5cff', pin:'#eab308', junction_dot:'#ef4444', ground:'#3b82f6',
   shield:'#8b5cf6', offpage_connector:'#ec4899', diode:'#f97316', relay:'#06b6d4',
-  resistor:'#84cc16', capacitor:'#a855f7', wire:'#646464', text:'#3b82f6'
+  resistor:'#84cc16', capacitor:'#a855f7'
 };
 
-// Stepper
-function goToStep(idx) {
-  state.currentStep = idx;
-  document.querySelectorAll('.step').forEach((el,i)=>{
-    el.classList.remove('active');
-    if (i===idx) el.classList.add('active');
-    if (i<idx) el.classList.add('done');
-    else el.classList.remove('done');
+const state = {
+  fileId: null, manifest: null, currentStage: 0,
+  vecSubstep: 'final', view: 'stage',
+  zoom: 1, sliderPos: 50, isPDF: false, pdfPages: [], currentPDFPage: 0,
+};
+
+// ---------------- Init ----------------
+function init() {
+  document.getElementById('stepper').innerHTML = STAGES.map((s,i)=>`
+    <div class="step ${i===0?'active':''}" data-idx="${i}" onclick="goToStage(${i})">
+      <div class="step-icon">${s.icon}</div>
+      <div><div class="step-name">${s.name}</div><div class="step-desc">${s.desc.split('.')[0]}</div></div>
+    </div>${i<STAGES.length-1?'<div class="step-arrow">→</div>':''}`).join('');
+  renderLegendStatic();
+  bindDragDrop();
+  bindSlider();
+}
+
+function renderLegendStatic() {
+  document.getElementById('legend').innerHTML = Object.entries(GOST_COLORS)
+    .map(([k,c])=>`<div class="legend-item"><div class="legend-dot" style="background:${c}"></div>${k}</div>`).join('');
+}
+
+function bindDragDrop() {
+  document.addEventListener('dragover', e=>e.preventDefault());
+  document.addEventListener('drop', e=>{
+    e.preventDefault();
+    const f = e.dataTransfer.files[0];
+    if (f) handleUpload(f);
   });
-  const step = STEPS[idx];
-  document.getElementById('stageLabel').textContent = `${step.icon} ${step.name}`;
-  document.getElementById('stageDesc').textContent = step.details;
-  document.getElementById('playbackLabel').textContent = `Шаг ${idx}/${STEPS.length-1} — ${step.name}`;
-  document.getElementById('playbackProgress').style.width = (idx/(STEPS.length-1)*100)+'%';
-  
-  const visSection = document.getElementById('visStepsSection');
-  const visSteps = document.getElementById('visSteps');
-  const diffSection = document.getElementById('diffSection');
-  
-  if (idx===4) {
-    visSection.style.display = 'block';
-    diffSection.style.display = 'block';
-    visSteps.innerHTML = [
-      {name:'Binary', desc:'Adaptive threshold', icon:'◐'},
-      {name:'Masked', desc:'Исключены УГО/текст', icon:'◫'},
-      {name:'Skeleton', desc:'1px Guo-Hall', icon:'〰'},
-      {name:'Segments', desc:'Hough+RDP', icon:'╱'},
-      {name:'Junctions', desc:'Degree>=3 T/X', icon:'●'},
-      {name:'Final', desc:'Overlay', icon:'✓'},
-    ].map((s,i)=>`<div class=\"vis-step ${i===0?'active':''}\" onclick=\"setVecStep('${s.name.toLowerCase()}', this)\"><div class=\"vis-step-icon\">${s.icon}</div><div class=\"vis-step-info\"><div class=\"vis-step-name\">${s.name}</div><div class=\"vis-step-desc\">${s.desc}</div></div></div>`).join('');
-  } else if (idx===5 || idx===7) {
-    visSection.style.display = 'none';
-    diffSection.style.display = 'block';
-  } else {
-    visSection.style.display = 'none';
-    diffSection.style.display = idx===0 ? 'block' : 'none';
-  }
-  
-  updateCanvasForStep(idx);
 }
 
-function updateCanvasForStep(idx) {
-  document.getElementById('labelRight').textContent = STEPS[idx].name;
-  if (!state.fileId) return;
-  
-  const stageMap = {0:'original',1:'tiles',2:'detection',3:'ocr',4:'vectorization',5:'graph',6:'vlm',7:'graph'};
-  const stage = stageMap[idx];
-  const imgRight = document.getElementById('imgRight');
-  
-  if (stage==='original') {
-    imgRight.src = `/api/image/${state.fileId}`;
-  } else {
-    imgRight.src = `/api/visualization/${state.fileId}/${stage}`;
-    imgRight.onerror = ()=>{ imgRight.src = `/api/image/${state.fileId}`; };
-  }
-  document.getElementById('emptyRight').style.display = 'none';
-  imgRight.style.display = 'block';
-  
-  // Auto switch to diff for step 4, graph for step 5
-  if (idx===4 && state.mode!=='diff') setMode('diff');
-  if ((idx===5 || idx===7) && state.mode==='image') setMode('graph2d');
-}
+function vizStatus(t) { document.getElementById('statusText').textContent = t; }
 
-function setVecStep(name, el) {
-  document.querySelectorAll('.vis-step').forEach(e=>e.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById('imgRight').src = `/api/visualization/${state.fileId}/vectorization/${name}`;
-}
-
-// Modes
-function setMode(mode) {
-  state.mode = mode;
-  document.querySelectorAll('[data-mode]').forEach(b=>b.classList.remove('active'));
-  document.querySelector(`[data-mode=\"${mode}\"]`)?.classList.add('active');
-  
-  document.getElementById('imageMode').style.display = (mode==='image' || mode==='split') ? 'flex' : 'none';
-  document.getElementById('diffMode').style.display = mode==='diff' ? 'flex' : 'none';
-  document.getElementById('graph2DMode').style.display = mode==='graph2d' ? 'flex' : 'none';
-  document.getElementById('graph3DMode').style.display = mode==='graph3d' ? 'flex' : 'none';
-  document.getElementById('diffToolbar').style.display = mode==='diff' ? 'flex' : 'none';
-  
-  if (mode==='graph2d' && state.manifest) renderGraph2D();
-  if (mode==='graph3d' && state.manifest) renderGraph3D();
-  if (mode==='diff' && state.fileId) initDiff();
-}
-
-function toggleSplit() {
-  const left = document.getElementById('paneLeft');
-  left.style.display = left.style.display==='none' ? 'flex' : 'none';
-}
-
-// Diff
-function setDiffMode(mode) {
-  state.diffMode = mode;
-  document.querySelectorAll('[data-diff]').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll(`[data-diff=\"${mode}\"]`).forEach(b=>b.classList.add('active'));
-  
-  if (state.mode!=='diff') setMode('diff');
-  else initDiff();
-}
-
-async function initDiff() {
-  if (!state.fileId) return;
-  
-  const orig = document.getElementById('diffImgOriginal');
-  const vec = document.getElementById('diffImgVector');
-  
-  // For side_by_side we use single image from backend, for slider we need two separate
-  if (state.diffMode === 'side_by_side' || state.diffMode === 'checker' || state.diffMode === 'overlay' || state.diffMode === 'difference' || state.diffMode === 'final_overlay') {
-    // Single image mode - backend returns combined
-    orig.style.display = 'none';
-    document.getElementById('diffOverlay').style.display = 'none';
-    document.getElementById('diffHandle').style.display = 'none';
-    
-    // Use imgRight as display for these modes
-    const imgRight = document.getElementById('imgRight');
-    imgRight.src = `/api/visualization/${state.fileId}/diff/${state.diffMode}`;
-    imgRight.style.display = 'block';
-    document.getElementById('emptyRight').style.display = 'none';
-    
-    // Switch to image mode to show it
-    if (state.mode === 'diff') {
-      document.getElementById('imageMode').style.display = 'flex';
-      document.getElementById('diffMode').style.display = 'none';
-      document.getElementById('paneLeft').style.display = 'none';
-    }
-  } else if (state.diffMode === 'blend_slider') {
-    // Slider mode - need two images
-    document.getElementById('imageMode').style.display = 'none';
-    document.getElementById('diffMode').style.display = 'flex';
-    
-    orig.src = `/api/image/${state.fileId}`;
-    vec.src = `/api/visualization/${state.fileId}/diff/final_overlay`;
-    
-    orig.style.display = 'block';
-    vec.style.display = 'block';
-    document.getElementById('diffOverlay').style.display = 'block';
-    document.getElementById('diffHandle').style.display = 'flex';
-    
-    initSlider();
-  }
-}
-
-function initSlider() {
-  const container = document.getElementById('diffContainer');
-  const overlay = document.getElementById('diffOverlay');
-  const handle = document.getElementById('diffHandle');
-  
-  let dragging = false;
-  
-  function updateSlider(x) {
-    const rect = container.getBoundingClientRect();
-    let pct = (x - rect.left) / rect.width * 100;
-    pct = Math.max(0, Math.min(100, pct));
-    overlay.style.width = pct + '%';
-    handle.style.left = pct + '%';
-  }
-  
-  handle.addEventListener('mousedown', e=>{ dragging = true; e.preventDefault(); });
-  window.addEventListener('mouseup', ()=>dragging=false);
-  window.addEventListener('mousemove', e=>{
-    if (!dragging) return;
-    updateSlider(e.clientX);
-  });
-  
-  container.addEventListener('click', e=>{
-    if (e.target === handle) return;
-    updateSlider(e.clientX);
-  });
-  
-  // Touch
-  handle.addEventListener('touchstart', e=>{ dragging = true; e.preventDefault(); });
-  window.addEventListener('touchend', ()=>dragging=false);
-  window.addEventListener('touchmove', e=>{
-    if (!dragging) return;
-    updateSlider(e.touches[0].clientX);
-  });
-  
-  // Init at 50%
-  setTimeout(()=>updateSlider(container.getBoundingClientRect().left + container.getBoundingClientRect().width*0.5), 100);
-}
-
-function setOpacity(val) {
-  document.getElementById('opacityLabel').textContent = val + '%';
-  const overlay = document.getElementById('diffOverlay');
-  if (overlay) overlay.style.opacity = val/100;
-}
-
-// Graph 2D
-function renderGraph2D() {
-  if (!state.manifest) return;
-  const nodes = [];
-  const edges = [];
-  state.manifest.components?.forEach(comp=>{
-    nodes.push({id: comp.id, label: comp.designator, group: 'component', title: `${comp.type} ${comp.bbox}`});
-    comp.pins?.forEach(pin=>{
-      const pinId = `${comp.id}_pin_${pin.pin_number}`;
-      nodes.push({id: pinId, label: `${comp.designator}:${pin.pin_number}`, group: 'pin', title: `${pin.coord}`});
-      edges.push({from: comp.id, to: pinId, dashes: true, color: {color: '#9a9aa3'}});
-    });
-  });
-  state.manifest.nets?.forEach(net=>{
-    const pinIds = net.connections?.map(c=>`${c.component_id}_pin_${c.pin}`) || [];
-    for (let i=0;i<pinIds.length;i++) for (let j=i+1;j<pinIds.length;j++) edges.push({from: pinIds[i], to: pinIds[j], label: net.net_id, color: {color: '#ef4444'}, width: 2});
-  });
-  const container = document.getElementById('graphNetwork');
-  const data = {nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges)};
-  const options = {
-    groups: {component: {color: {background: '#6c5cff', border: '#8b7cff'}, shape: 'box', font: {color: 'white'}}, pin: {color: {background: '#eab308', border: '#facc15'}, shape: 'dot', size: 8}},
-    physics: {enabled: true, solver: 'forceAtlas2Based'},
-    interaction: {hover: true},
-  };
-  state.graph = new vis.Network(container, data, options);
-}
-
-// Graph 3D - Three.js
-function renderGraph3D() {
-  const canvas = document.getElementById('graph3D');
-  const container = canvas.parentElement;
-  
-  // Clean previous
-  if (state.graph3D.renderer) {
-    state.graph3D.renderer.dispose();
-    container.removeChild(state.graph3D.renderer.domElement);
-  }
-  
-  const width = container.clientWidth;
-  const height = container.clientHeight;
-  
-  // Scene
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x050508);
-  scene.fog = new THREE.Fog(0x050508, 800, 2000);
-  
-  // Camera
-  const camera = new THREE.PerspectiveCamera(60, width/height, 1, 5000);
-  camera.position.set(0, 0, 800);
-  
-  // Renderer
-  const renderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, alpha: true});
-  renderer.setSize(width, height);
-  renderer.setPixelRatio(window.devicePixelRatio);
-  
-  // Controls
-  const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.1;
-  controls.autoRotate = false;
-  controls.autoRotateSpeed = 0.5;
-  
-  // Lights
-  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-  scene.add(ambient);
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight.position.set(300, 500, 400);
-  scene.add(dirLight);
-  const pointLight = new THREE.PointLight(0x6c5cff, 1, 1000);
-  pointLight.position.set(0, 0, 200);
-  scene.add(pointLight);
-  
-  // Grid
-  const gridHelper = new THREE.GridHelper(2000, 20, 0x2a2a30, 0x1c1c1f);
-  gridHelper.rotation.x = Math.PI/2;
-  gridHelper.position.z = -50;
-  scene.add(gridHelper);
-  
-  // Fetch 3D data
-  fetch(`/api/graph/${state.fileId}/3d`)
-    .then(r=>r.json())
-    .then(data=>{
-      document.getElementById('graph3DStats').textContent = `3D: ${data.stats.total_nodes} узлов, ${data.stats.total_edges} ребер, ${data.stats.components} компонентов, ${data.stats.nets} цепей`;
-      
-      // Create nodes
-      const nodeMeshes = {};
-      
-      data.nodes.forEach(node=>{
-        let geometry, material, mesh;
-        
-        if (node.type === 'component') {
-          if (node.component_type === 'connector') {
-            geometry = new THREE.BoxGeometry(24, 40, 12);
-          } else {
-            geometry = new THREE.SphereGeometry(node.size || 8, 16, 16);
-          }
-          const color = new THREE.Color(node.color_hex || '#6c5cff');
-          material = new THREE.MeshPhongMaterial({color: color, shininess: 100});
-          mesh = new THREE.Mesh(geometry, material);
-        } else if (node.type === 'pin') {
-          geometry = new THREE.SphereGeometry(4, 12, 12);
-          material = new THREE.MeshPhongMaterial({color: 0xeab308, emissive: 0x332200});
-          mesh = new THREE.Mesh(geometry, material);
-        } else { // wire
-          geometry = new THREE.SphereGeometry(1.5, 8, 8);
-          material = new THREE.MeshBasicMaterial({color: 0x646464, transparent: true, opacity: 0.6});
-          mesh = new THREE.Mesh(geometry, material);
-        }
-        
-        // Position - center around 0,0 and scale
-        mesh.position.set(
-          (node.x - 500) * 1.2,
-          -(node.y - 400) * 1.2,
-          node.z * 2
-        );
-        mesh.userData = node;
-        
-        scene.add(mesh);
-        nodeMeshes[node.id] = mesh;
-        
-        // Label sprite for components
-        if (node.type === 'component') {
-          const canvas = document.createElement('canvas');
-          canvas.width = 128; canvas.height = 32;
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = 'rgba(0,0,0,0.7)';
-          ctx.fillRect(0,0,128,32);
-          ctx.fillStyle = 'white';
-          ctx.font = '14px Inter';
-          ctx.fillText(node.label, 8, 20);
-          const texture = new THREE.CanvasTexture(canvas);
-          const spriteMat = new THREE.SpriteMaterial({map: texture});
-          const sprite = new THREE.Sprite(spriteMat);
-          sprite.position.set(mesh.position.x, mesh.position.y + 20, mesh.position.z + 10);
-          sprite.scale.set(60, 15, 1);
-          scene.add(sprite);
-        }
-      });
-      
-      // Create edges as lines
-      data.edges.forEach(edge=>{
-        const fromMesh = nodeMeshes[edge.from];
-        const toMesh = nodeMeshes[edge.to];
-        if (!fromMesh || !toMesh) return;
-        
-        const points = [fromMesh.position.clone(), toMesh.position.clone()];
-        
-        // If wire with path, use intermediate points
-        if (edge.path_points && edge.path_points.length > 0) {
-          // Already handled via wire nodes
-        }
-        
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        let material;
-        if (edge.type === 'net' || edge.type === 'wire') {
-          material = new THREE.LineBasicMaterial({color: 0xef4444, linewidth: 2});
-        } else {
-          material = new THREE.LineDashedMaterial({color: 0x666666, dashSize: 4, gapSize: 2});
-          geometry.computeLineDistances();
-        }
-        const line = new THREE.Line(geometry, material);
-        scene.add(line);
-      });
-      
-      state.graph3D.nodes = Object.values(nodeMeshes);
-    })
-    .catch(e=>{
-      console.error('3D graph failed', e);
-      document.getElementById('graph3DStats').textContent = 'Ошибка загрузки 3D графа: ' + e;
-    });
-  
-  // Animation loop
-  function animate() {
-    if (!state.graph3D.renderer) return;
-    requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
-    
-    // Gentle floating animation
-    if (state.graph3D.animating) {
-      const time = Date.now() * 0.001;
-      state.graph3D.nodes.forEach((mesh, i)=>{
-        if (mesh.userData.type === 'wire') {
-          mesh.position.z += Math.sin(time + i*0.1) * 0.1;
-        }
-      });
-    }
-  }
-  animate();
-  
-  // Handle resize
-  window.addEventListener('resize', ()=>{
-    const w = container.clientWidth;
-    const h = container.clientHeight;
-    camera.aspect = w/h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-  });
-  
-  state.graph3D = {scene, camera, renderer, controls, nodes: [], edges: [], animating: false};
-}
-
-function reset3DView() {
-  if (state.graph3D.camera && state.graph3D.controls) {
-    state.graph3D.camera.position.set(0, 0, 800);
-    state.graph3D.controls.target.set(0, 0, 0);
-    state.graph3D.controls.update();
-  }
-}
-
-function toggle3DAnimation() {
-  state.graph3D.animating = !state.graph3D.animating;
-  if (state.graph3D.controls) {
-    state.graph3D.controls.autoRotate = state.graph3D.animating;
-  }
-}
-
-// Playback
-let playInterval = null;
-function togglePlay() {
-  state.playing = !state.playing;
-  document.getElementById('playBtn').textContent = state.playing ? '⏸' : '▶';
-  if (state.playing) {
-    playInterval = setInterval(()=>{ if (state.currentStep < STEPS.length-1) goToStep(state.currentStep+1); else togglePlay(); }, 2000);
-  } else clearInterval(playInterval);
-}
-function nextStep() { if (state.currentStep < STEPS.length-1) goToStep(state.currentStep+1); }
-function prevStep() { if (state.currentStep > 0) goToStep(state.currentStep-1); }
-function seek(e) {
-  const rect = e.currentTarget.getBoundingClientRect();
-  const pct = (e.clientX - rect.left) / rect.width;
-  goToStep(Math.round(pct * (STEPS.length-1)));
-}
-function zoom(factor) {
-  // Implement zoom for current mode
-  if (state.mode === 'graph3d' && state.graph3D.camera) {
-    state.graph3D.camera.position.z *= 1/factor;
-  }
-}
-function fitView() {}
-function switchRightTab(name) {
-  document.getElementById('rightJson').style.display = name==='json' ? 'block' : 'none';
-  document.getElementById('rightNets').style.display = name==='nets' ? 'block' : 'none';
-  document.querySelectorAll('[data-rtab]').forEach(b=>b.classList.remove('active'));
-  document.querySelector(`[data-rtab=\"${name}\"]`).classList.add('active');
-}
-async function generateReport() {
-  if (!state.fileId) { alert('Загрузите файл'); return; }
-  window.open(`/api/report/${state.fileId}`, '_blank');
-}
-
-// Upload
-function vizStatus(t) { const el = document.getElementById('vizHint'); if (el) el.textContent = t; }
-
+// ---------------- Upload / process ----------------
 async function handleUpload(file) {
   try {
     vizStatus('Загрузка файла...');
@@ -807,73 +265,343 @@ async function handleUpload(file) {
     if (!res.ok) { vizStatus('Ошибка загрузки: ' + res.status); return; }
     const data = await res.json();
     state.fileId = data.file_id;
-
-    document.getElementById('imgLeft').src = `/api/image/${state.fileId}`;
-    document.getElementById('imgLeft').style.display = 'block';
-    document.getElementById('imgRight').src = `/api/image/${state.fileId}`;
-    document.getElementById('imgRight').style.display = 'block';
-
+    state.isPDF = !!data.is_pdf;
     await loadOrProcess();
   } catch(e) { vizStatus('Ошибка: ' + e); }
 }
 
-// Если файл уже обработан - показываем результат; иначе предлагаем обработать
 async function loadOrProcess() {
   let r = await fetch(`/api/result/${state.fileId}`);
-  if (r.ok) { applyManifest(await r.json()); return; }
+  if (r.ok) { applyManifest(await r.json()); loadStage(); return; }
 
   if (!confirm('Скан ещё не обработан. Запустить обработку сейчас?')) {
-    vizStatus('Файл загружен. Обработка не запущена (нажмите «Загрузить скан» ещё раз, чтобы обработать).');
+    vizStatus('Файл загружен, обработка не запущена');
     return;
   }
-
   const pr = await fetch(`/api/process/${state.fileId}`, {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})
+    method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
   });
   if (!pr.ok) { vizStatus('Не удалось запустить обработку: ' + pr.status); return; }
   const pj = await pr.json();
-  const jobId = pj.job_id;
-
   while (true) {
     await new Promise(s=>setTimeout(s, 1000));
     let st;
-    try {
-      const sr = await fetch(`/api/status/${jobId}`);
-      st = await sr.json();
-    } catch(e) { continue; }
+    try { st = await (await fetch(`/api/status/${pj.job_id}`)).json(); } catch(e) { continue; }
     vizStatus(`Обработка: ${st.current_stage || '...'} ${st.progress != null ? st.progress + '%' : ''}`);
     if (st.status === 'completed') break;
-    if (st.status === 'failed') { vizStatus('Ошибка обработки: ' + (st.errors || []).join(', ')); return; }
+    if (st.status === 'failed') { vizStatus('Ошибка обработки: ' + (st.errors||[]).join(', ')); return; }
   }
-
   r = await fetch(`/api/result/${state.fileId}`);
-  if (r.ok) applyManifest(await r.json());
-  else vizStatus('Обработка завершена, но результат не получен');
+  if (r.ok) {
+    applyManifest(await r.json());
+    loadStage();
+  }
 }
 
 function applyManifest(manifest) {
   state.manifest = manifest;
-  document.getElementById('mComp').textContent = manifest.components?.length||0;
-  document.getElementById('mNets').textContent = manifest.nets?.length||0;
-  document.getElementById('mIssues').textContent = manifest.human_review_required?.length||0;
-  document.getElementById('jsonView').textContent = JSON.stringify(manifest, null, 2).slice(0,3000)+'...';
+  document.getElementById('mComp').textContent = manifest.components?.length ?? '—';
+  document.getElementById('mNets').textContent = manifest.nets?.length ?? '—';
+  document.getElementById('mIssues').textContent = manifest.human_review_required?.length ?? '—';
 
-  // Legend
+  // фактическое время обработки
+  const t = manifest.schema_metadata?.processing_time_seconds;
+  document.getElementById('mTime').textContent = (typeof t === 'number') ? t.toFixed(1) : '—';
+
   const byClass = {};
   manifest.components?.forEach(c=>{ byClass[c.type] = (byClass[c.type]||0)+1; });
-  document.getElementById('legend').innerHTML = Object.entries(byClass).map(([cls,count])=>`<div class=\"legend-item\"><div class=\"legend-dot\" style=\"background:${GOST_COLORS[cls]||'#888'}\"></div> ${cls} <span class=\"legend-count\">${count}</span></div>`).join('') || 'Нет данных';
+  const legend = Object.entries(byClass).map(([k,v])=>
+    `<div class="legend-item"><div class="legend-dot" style="background:${GOST_COLORS[k]||'#888'}"></div>${k}<span class="legend-count">${v}</span></div>`).join('');
+  document.getElementById('legend').innerHTML = legend || 'Компонентов не найдено';
 
-  document.getElementById('compList').innerHTML = manifest.components?.slice(0,10).map(c=>`<div style=\"padding:6px 8px;background:#1c1c1f;border:1px solid #2a2a30;border-radius:6px;font-size:11px\"><b>${c.designator}</b> ${c.type}</div>`).join('') || 'Нет';
+  document.getElementById('compList').innerHTML = manifest.components?.slice(0,20).map(c=>
+    `<div class="list-item"><div class="item-top"><span class="item-title">${c.designator}</span><span class="item-badge">${c.type}</span></div><div class="item-meta">пинов: ${c.pins?.length||0}</div></div>`).join('') || 'Нет';
 
-  vizStatus(`Готово · компонент: ${manifest.components?.length||0}, цепей: ${manifest.nets?.length||0}`);
-  goToStep(0);
+  document.getElementById('netList').innerHTML = manifest.nets?.slice(0,20).map((n,i)=>
+    `<div class="list-item"><div class="item-top"><span class="item-title">${n.net_id || n.name || ('net_'+i)}</span><span class="item-badge">${n.path_points?.length||0} тчк</span></div></div>`).join('') || 'Нет';
+
+  document.getElementById('jsonView').textContent = JSON.stringify(manifest, null, 2).slice(0, 4000) + (JSON.stringify(manifest).length > 4000 ? '\n...' : '');
+
+  const warns = [];
+  // Предупреждения приходят из status-джобы, но в манифест их нет; покажем issues
+  if (manifest.human_review_required?.length) {
+    warns.push(`Требует проверки: ${manifest.human_review_required.length}`);
+  }
+  document.getElementById('warnList').innerHTML =
+    warns.length ? warns.map(w=>`⚠️ ${w}`).join('<br>') : '—';
 }
 
-document.addEventListener('dragover', e=>e.preventDefault());
-document.addEventListener('drop', e=>{ e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) handleUpload(f); });
+// ---------------- Stages ----------------
+function goToStage(idx) {
+  state.currentStage = idx;
+  document.querySelectorAll('.step').forEach((el,i)=>{
+    el.classList.toggle('active', i===idx);
+    el.classList.toggle('done', i<idx);
+  });
+  document.getElementById('stageDesc').textContent = STAGES[idx].desc;
+  loadStage();
+}
 
-// Init
-goToStep(0);
+function stageUrl(idx) {
+  const key = STAGES[idx].key;
+  if (key === 'original') return `/api/image/${state.fileId}`;
+  if (key === 'netlist')  return `/api/image/${state.fileId}`;
+  if (key === 'vectorization') return `/api/visualization/${state.fileId}/vectorization/${state.vecSubstep}`;
+  return `/api/visualization/${state.fileId}/${key}`;
+}
+
+function loadStage(force) {
+  const idx = state.currentStage;
+  const stage = STAGES[idx];
+  document.getElementById('labelRight').textContent = stage.name;
+
+  const graphBox = document.getElementById('graphSvgBox');
+  const isGraph = stage.key === 'graph';
+
+  if (!state.fileId) {
+    showPlaceholder('Загрузите скан (кнопка справа сверху) или перетащите файл в окно');
+    return;
+  }
+
+  // Граф рендерим сами из манифеста - надёжно и без перезапуска детекции
+  if (isGraph) {
+    hideAll();
+    graphBox.style.display = 'block';
+    if (state.manifest) { renderGraph2D(); vizStatus('Граф из манифеста'); }
+    else showPlaceholder('Манифест недоступен: запустите обработку');
+    return;
+  }
+  graphBox.style.display = 'none';
+
+  const url = stageUrl(idx);
+  vizStatus('Загрузка стадии...');
+  setRightImage(url, stage.name);
+}
+
+function setRightImage(url, name) {
+  const img = document.getElementById('imgRight');
+  const err = document.getElementById('errRight');
+  err.style.display = 'none';
+  img.style.opacity = '1';
+  img.onerror = () => {
+    img.style.display = 'none';
+    document.getElementById('errRightText').textContent =
+      `Стадия «${name}» недоступна (файл не обработан или ошибка сервера)`;
+    err.style.display = 'flex';
+    vizStatus(`Ошибка загрузки стадии «${name}»`);
+  };
+  img.onload = () => { err.style.display = 'none'; vizStatus('Готово'); };
+  img.src = url;
+  img.style.display = 'block';
+}
+
+function hideAll() {
+  ['paneStage','paneSlider','paneOverlay'].forEach(id=>document.getElementById(id).style.display='none');
+}
+
+function showPlaceholder(text) {
+  const ph = document.getElementById('placeholderStage');
+  ph.innerHTML = text;
+  ph.style.display = 'flex';
+  ['imgLeft','imgRight'].forEach(id=>document.getElementById(id).style.display='none');
+  vizStatus('—');
+}
+
+// ---------------- View modes ----------------
+function setView(view, el) {
+  state.view = view;
+  document.querySelectorAll('[data-view]').forEach(b=>b.classList.remove('active'));
+  if (el) el.classList.add('active');
+
+  const stage = STAGES[state.currentStage].key;
+  const isOriginal = !state.fileId || stage === 'original';
+
+  document.getElementById('opacityRow').style.display = view==='overlay' ? 'flex' : 'none';
+  document.getElementById('graphSvgBox').style.display = 'none';
+
+  if (isOriginal) {
+    // Для оригинала все режимы бессмысленны - показываем A|B как одну картинку
+    hideAll();
+    const pane = document.getElementById('paneStage');
+    pane.style.display = 'flex';
+    document.getElementById('placeholderStage').style.display = state.fileId ? 'none' : 'flex';
+    document.getElementById('imgLeft').style.display = 'block';
+    document.getElementById('imgLeft').src = state.fileId ? `/api/image/${state.fileId}` : '';
+    setRightImage(state.fileId ? `/api/image/${state.fileId}` : '', 'Оригинал');
+    vizStatus('Оригинал: выберите стадию сверху');
+    return;
+  }
+
+  if (view === 'stage') {
+    hideAll();
+    document.getElementById('paneStage').style.display = 'flex';
+    document.getElementById('placeholderStage').style.display = 'none';
+    document.getElementById('imgLeft').style.display = 'block';
+    document.getElementById('imgLeft').src = `/api/image/${state.fileId}`;
+    loadStage();
+  } else if (view === 'slider') {
+    hideAll();
+    document.getElementById('paneSlider').style.display = 'flex';
+    const bottom = document.getElementById('sliderBottom');
+    const top = document.getElementById('sliderTop');
+    bottom.src = `/api/image/${state.fileId}`;
+    top.onerror = () => { vizStatus('Стадия не загрузилась — слайдер недоступен'); };
+    top.src = stageUrl(state.currentStage);
+    state.sliderPos = 50;
+    applySlider(50);
+    vizStatus('Слайдер: тяните шторку мышью');
+  } else if (view === 'overlay') {
+    hideAll();
+    const pane = document.getElementById('paneOverlay');
+    pane.style.display = 'flex';
+    const bottom = document.getElementById('overlayBottom');
+    const top = document.getElementById('overlayTop');
+    // размеры под размер стади-картинки, чтобы совпали пиксели
+    top.onload = () => {
+      [bottom, top].forEach(im=>{ im.style.width = top.naturalWidth+'px'; im.style.height = top.naturalHeight+'px'; });
+      fitOverlay();
+    };
+    bottom.src = `/api/image/${state.fileId}`;
+    top.src = stageUrl(state.currentStage);
+    setOpacity(document.getElementById('opacitySlider').value);
+    // правая картинка режима A|B скрывается, но стадию грузим через неё не нужно
+    document.getElementById('imgRight').style.display = 'none';
+  }
+}
+
+function fitOverlay() {
+  const wrap = document.getElementById('canvasWrap').getBoundingClientRect();
+  const top = document.getElementById('overlayTop');
+  const scale = Math.min((wrap.width-40)/top.naturalWidth, (wrap.height-40)/top.naturalHeight, 1);
+  [document.getElementById('overlayBottom'), top].forEach(im=>{
+    im.style.width = (top.naturalWidth*scale)+'px';
+    im.style.height = (top.naturalHeight*scale)+'px';
+  });
+}
+
+function setOpacity(v) {
+  document.getElementById('overlayVal').textContent = v + '%';
+  document.getElementById('overlayTop').style.opacity = v/100;
+}
+
+// ---------------- Slider ----------------
+function bindSlider() {
+  const box = document.getElementById('paneSlider');
+  const handle = document.getElementById('sliderHandle');
+  let dragging = false;
+  const move = e => {
+    const rect = box.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    applySlider(x / rect.width * 100);
+  };
+  handle.addEventListener('mousedown', e=>{ dragging = true; e.preventDefault(); });
+  window.addEventListener('mousemove', e=>{ if (dragging) move(e); });
+  window.addEventListener('mouseup', ()=>dragging=false);
+  handle.addEventListener('touchstart', ()=>dragging=true);
+  window.addEventListener('touchmove', e=>{ if (dragging) move(e.touches[0]); });
+  window.addEventListener('touchend', ()=>dragging=false);
+}
+
+function applySlider(pos) {
+  state.sliderPos = pos;
+  document.getElementById('sliderTop').style.clipPath = `inset(0 ${100-pos}% 0 0)`;
+  const box = document.getElementById('paneSlider');
+  document.getElementById('sliderHandle').style.left = (box.clientWidth * pos / 100) + 'px';
+}
+
+// ---------------- Zoom / pan ----------------
+function activeImg() {
+  if (state.view === 'slider') return document.getElementById('sliderTop');
+  if (state.view === 'overlay') return document.getElementById('overlayTop');
+  return document.getElementById('imgRight');
+}
+
+function zoomBy(f) {
+  const img = activeImg();
+  if (!img || img.style.display === 'none') return;
+  state.zoom = Math.max(0.1, Math.min(20, state.zoom * f));
+  img.style.transform = `scale(${state.zoom})`;
+}
+
+function resetView() {
+  state.zoom = 1;
+  ['imgRight','imgLeft','sliderTop','sliderBottom','overlayTop','overlayBottom'].forEach(id=>{
+    const el = document.getElementById(id);
+    if (el) el.style.transform = '';
+  });
+  if (state.view === 'slider') applySlider(50);
+  if (state.view === 'overlay') fitOverlay();
+}
+
+// ---------------- Vectorization substeps ----------------
+function setVecStep(name) {
+  state.vecSubstep = name;
+  document.querySelectorAll('.vec-step').forEach(e=>e.classList.remove('active'));
+  event.target.classList?.add('active');
+  if (state.view !== 'stage') setView('stage', document.querySelector('[data-view="stage"]'));
+  setRightImage(`/api/visualization/${state.fileId}/vectorization/${name}`, 'Векторизация: ' + name);
+}
+
+// ---------------- Graph 2D (из манифеста, без внешних зависимостей) ----------------
+function renderGraph2D() {
+  const svg = document.getElementById('graphSvg');
+  const m = state.manifest;
+  if (!m || !m.components) { svg.innerHTML = '<text x="20" y="40" fill="#9a9aa3">Нет данных</text>'; return; }
+
+  // Габариты из координат
+  let maxX = 100, maxY = 100;
+  const pts = [];
+  m.components.forEach(c=>{
+    const [x1,y1,x2,y2] = c.bbox;
+    pts.push([x2,y2]);
+    (c.pins||[]).forEach(p=>pts.push(p.coord));
+  });
+  m.nets?.forEach(n=>(n.path_points||[]).forEach(p=>pts.push(p)));
+  pts.forEach(([x,y])=>{ maxX = Math.max(maxX,x); maxY = Math.max(maxY,y); });
+
+  const W = Math.max(document.getElementById('graphSvgBox').clientWidth, 800);
+  const scale = Math.min(W / (maxX+50), 2);
+  const H = (maxY+50)*scale;
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  let html = `<rect width="${W}" height="${H}" fill="#0b0b0e"/>`;
+  // цепи
+  m.nets?.forEach(net=>{
+    const pp = net.path_points || [];
+    for (let i=0;i<pp.length-1;i++) {
+      html += `<line x1="${pp[i][0]*scale}" y1="${pp[i][1]*scale}" x2="${pp[i+1][0]*scale}" y2="${pp[i+1][1]*scale}" stroke="#ef4444" stroke-width="1" opacity="0.7"/>`;
+    }
+  });
+  // компоненты
+  m.components.forEach(c=>{
+    const [x1,y1,x2,y2] = c.bbox;
+    const col = GOST_COLORS[c.type] || '#6c5cff';
+    html += `<rect x="${x1*scale}" y="${y1*scale}" width="${(x2-x1)*scale}" height="${(y2-y1)*scale}"
+      fill="${col}22" stroke="${col}" stroke-width="1.5" rx="3"/>`;
+    html += `<text x="${x1*scale+3}" y="${y1*scale-4}" fill="${col}" font-size="11" font-family="Inter">${c.designator}</text>`;
+    (c.pins||[]).forEach(p=>{
+      html += `<circle cx="${p.coord[0]*scale}" cy="${p.coord[1]*scale}" r="3" fill="#3b82f6"/>`;
+    });
+  });
+  svg.innerHTML = html;
+}
+
+// ---------------- Отчёт ----------------
+function generateReport() {
+  if (!state.fileId) { alert('Сначала загрузите и обработайте скан'); return; }
+  window.open(`/api/report/${state.fileId}`, '_blank');
+}
+
+// Keyboard: стрелки по стадиям
+window.addEventListener('keydown', e=>{
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowRight') goToStage(Math.min(STAGES.length-1, state.currentStage+1));
+  if (e.key === 'ArrowLeft')  goToStage(Math.max(0, state.currentStage-1));
+});
+
+init();
+goToStage(0);
 </script>
 </body>
 </html>

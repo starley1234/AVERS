@@ -455,8 +455,14 @@ async def get_result(file_id: str):
     result_path = RESULTS_DIR / f"{file_id}.json"
     if result_path.exists():
         with open(result_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    
+            data = json.load(f)
+        try:
+            from avers.core.types import AVERSManifest
+            manifests_db[file_id] = AVERSManifest(**data)
+        except Exception as e:
+            logging.getLogger("avers.web").warning(f"Манифест с диска не распарсен: {e}")
+        return data
+
     raise HTTPException(404, "Result not found - run processing first")
 
 
@@ -495,11 +501,41 @@ async def get_visualization(file_id: str, stage: str, page: int = Query(0, ge=0)
             cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
         
         elif stage == "detection":
-            from avers.core.validators import SlicedDetector
             from avers.web.visualization import visualize_detections_enhanced
-            detector = SlicedDetector(device="cpu")
-            detections = detector.detect(image)
-            vis = visualize_detections_enhanced(image, detections)
+
+            # Приоритет: СОХРАНЁННЫЙ результат пайплайна (не перезапускаем детектор -
+            # иначе показывается не то, что реально выдала обработка)
+            manifest = manifests_db.get(file_id)
+            if manifest is None:
+                result_path = RESULTS_DIR / f"{file_id}.json"
+                if result_path.exists():
+                    try:
+                        with open(result_path, "r", encoding="utf-8") as f:
+                            from avers.core.types import AVERSManifest
+                            manifest = AVERSManifest(**json.load(f))
+                        manifests_db[file_id] = manifest
+                    except Exception:
+                        manifest = None
+
+            if manifest is not None:
+                vis = image.copy()
+                for comp in manifest.components:
+                    x1, y1, x2, y2 = comp.bbox
+                    cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(vis, comp.designator, (x1, max(12, y1 - 5)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
+                    for pin in comp.pins:
+                        cv2.circle(vis, tuple(pin.coord), 4, (255, 0, 0), -1)
+                cv2.putText(vis, f"saved result: {len(manifest.components)} components",
+                            (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
+            else:
+                # Файл не обработан - живой запуск, честно помечаем
+                from avers.core.validators import SlicedDetector
+                detector = SlicedDetector(device="cpu")
+                detections = detector.detect(image)
+                vis = visualize_detections_enhanced(image, detections)
+                cv2.putText(vis, "LIVE (file not processed)", (12, 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 1)
             cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
         
         elif stage == "ocr":
