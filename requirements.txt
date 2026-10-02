@@ -10,7 +10,12 @@ pydantic-settings>=2.1.0
 PyYAML>=6.0.1
 
 # Computer Vision
-opencv-python>=4.8.0
+# NOTE: install ONLY ONE of opencv-python / opencv-python-headless - both
+# provide the `cv2` module and installing both breaks the package (pip
+# uninstall of one removes shared native libs used by the other). Use
+# opencv-python-headless in servers/containers/CI/sandboxes (no libGL.so.1 /
+# X11 required); switch to opencv-python only if you need cv2.imshow() on a
+# machine with a display.
 opencv-python-headless>=4.8.0
 scikit-image>=0.22.0
 Pillow>=10.0.0

@@ -172,6 +172,34 @@ class WebConfig(BaseModel):
     max_file_size_mb: int = Field(default=50)
 
 
+class ActiveLearningConfig(BaseModel):
+    """Active Learning Loop configuration (v0.3: validator -> retraining)."""
+    enabled: bool = Field(default=True, description="Enable feedback collection from validator")
+    feedback_dir: str = Field(default="/tmp/avers_feedback", description="Where FeedbackEntry records are stored")
+    min_feedback_for_retrain: int = Field(default=50, description="Feedback samples needed before retrain is 'due'")
+    retrain_model_type: str = Field(default="rtdetr-l", description="Model architecture used for retraining")
+    retrain_epochs: int = Field(default=20, description="Epochs for fine-tuning (fewer than from-scratch training)")
+
+    # Scheduler (auto retraining)
+    scheduler_enabled: bool = Field(default=False, description="Start the background retrain scheduler with the web app")
+    scheduler_check_interval_sec: int = Field(default=3600, description="How often to check should_retrain()")
+
+    # Model registry / versioning / A-B testing
+    registry_dir: str = Field(default="/tmp/avers_model_registry", description="Model version registry root")
+
+    # Dataset merge (synthetic + feedback [+ public]) used before each retrain
+    base_synthetic_dataset_yaml: Optional[str] = Field(
+        default=None, description="Path to synthetic GOST dataset.yaml to merge with feedback before retraining"
+    )
+    feedback_oversample_weight: int = Field(
+        default=3, description="How many times to replicate feedback samples relative to synthetic data"
+    )
+
+    # Notifications
+    notify_webhook_url: Optional[str] = Field(default=None, description="Generic webhook URL (Slack/Mattermost/n8n/...)")
+    notify_log_file: str = Field(default="/tmp/avers_feedback/notifications.jsonl", description="JSONL notification history")
+
+
 class AVERSConfig(BaseModel):
     """Complete AVERS configuration."""
     project_name: str = Field(default="AVERS")
@@ -191,6 +219,9 @@ class AVERSConfig(BaseModel):
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+
+    # New in v0.3
+    active_learning: ActiveLearningConfig = Field(default_factory=ActiveLearningConfig)
 
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")

@@ -1,0 +1,46 @@
+{
+  "description": "Curated sample of real Soviet/Russian electrical schematics, tiered from simple to complex, for smoke-testing the AVERS pipeline and seeding the v0.3 Active Learning Loop with real-world (non-synthetic) material. See README.md in this folder and docs/REAL_SCHEMATICS_SOURCES.md for the full source catalog and scale-up instructions.",
+  "usage_notice": "Internal R&D / model evaluation use only. These are scans scraped from public enthusiast/reference sites (not original AVERS works); do not redistribute this folder outside the project. Verify rights before any commercial or public release. See each entry's source_url for attribution.",
+  "tiers": [
+    {
+      "id": "tier0_gost_symbols",
+      "difficulty": "trivial",
+      "description": "Clean vector-like tables of individual GOST 2.721-74 УГО symbols (no full schematic context). Useful for sanity-checking symbol classification and as a visual reference for avers/dataset/gost_symbols.py draw functions.",
+      "files": [
+        {"file": "gost_2721_symbols_01.jpg", "title": "ГОСТ 2.721-74 ЕСКД — Обозначения условные графические в схемах", "source_url": "https://www.opengost.ru/iso/01_gosty/01080_gost_iso/0108040_gost_iso/1426-gost-2.721-74-eskd.-oboznacheniya-uslovnye-graficheskie-v-shemah.-oboznacheniya-obschego-primeneniya.html"},
+        {"file": "gost_2721_symbols_02.jpg", "title": "ГОСТ 2.721-74 ЕСКД — Обозначения условные графические в схемах", "source_url": "https://www.opengost.ru/iso/01_gosty/01080_gost_iso/0108040_gost_iso/1426-gost-2.721-74-eskd.-oboznacheniya-uslovnye-graficheskie-v-shemah.-oboznacheniya-obschego-primeneniya.html"},
+        {"file": "gost_2721_symbols_03.jpg", "title": "ГОСТ 2.721-74 ЕСКД — Обозначения условные графические в схемах", "source_url": "https://www.opengost.ru/iso/01_gosty/01080_gost_iso/0108040_gost_iso/1426-gost-2.721-74-eskd.-oboznacheniya-uslovnye-graficheskie-v-shemah.-oboznacheniya-obschego-primeneniya.html"}
+      ]
+    },
+    {
+      "id": "tier1_simple_car",
+      "difficulty": "simple",
+      "description": "Soviet car wiring diagrams (Э4-like 'connection diagram'): ~50-70 symbols, connector blocks, numbered pins, color-coded wires, ground points. Structurally very close to a small БКС schema (connector_body/pin/junction_dot/ground/wire). Best starting point for real-data fine-tuning before tackling multi-sheet complex diagrams.",
+      "files": [
+        {"file": "vaz_2101_wiring_01.jpg", "title": "Схема электрооборудования ВАЗ-2101/2102", "source_url": "https://auto-schema.ru/auto_schema/vaz/shema-elektrooborudovaniya-vaz-2101_vaz-2102"},
+        {"file": "vaz_2101_wiring_02.jpg", "title": "Схема электрооборудования ВАЗ-2101/2102 (с цветовой маркировкой проводов)", "source_url": "https://www.drive2.ru/l/2054382/"},
+        {"file": "vaz_2101_wiring_03.jpg", "title": "Схема электрооборудования ВАЗ-21011/21013", "source_url": "https://www.avto-elektrika-shema.ru/index/skhema_ehlektrooborudovanija_vaz_2101_2102_21011_21013/0-471"}
+      ]
+    },
+    {
+      "id": "tier2_medium_radio",
+      "difficulty": "medium",
+      "description": "Vintage Soviet tube-radio principal schematics (Э3): moderate component density, authentic scan artifacts (noise, skew, faded print) useful for OCR/robustness training, resistor/capacitor/diode symbols close to GOST 2.728/2.730.",
+      "files": [
+        {"file": "tube_radio_kub4_01.png", "title": "Принципиальная схема лампового радиоприемника КУБ-4", "source_url": "http://radiolamp.net/news/374-sxema-korotkovolnovogo-priemnika-kub-4.html"},
+        {"file": "tube_radio_ukv_02.png", "title": "Принципиальная схема лампового УКВ радиоприемника на 420-430 МГц", "source_url": "https://radiolamp.net/news/121-sxema-vosmilampovogo-ukv-priemnika-na-420-mgc.html"},
+        {"file": "tube_radio_antenna_03.png", "title": "Схема подключения лампового радиоприемника к телеантенне", "source_url": "https://radiostorage.net/1760-remont-staryh-lampovyh-priemnikov-zamena-i-test-radiolamp-poleznye-sovety.html"}
+      ]
+    },
+    {
+      "id": "tier3_complex_truck",
+      "difficulty": "complex",
+      "description": "Modern heavy-truck (KAMAZ) electrical control system principal schematics: high component density, dense wiring, closer in scale/complexity to a real multi-sheet БКС. Use once the model performs well on tier1/tier2.",
+      "files": [
+        {"file": "kamaz_5490_electrical_01.jpg", "title": "Схема электрическая принципиальная системы управления электрооборудованием КамАЗ 5490", "source_url": "https://almarka.ru/shema-jelektricheskaja-principialnaja-sistemy-upravlenija-jelektrooborudovaniem-kamaz-5490"},
+        {"file": "kamaz_5490_electrical_02.jpg", "title": "Схема электрическая принципиальная системы управления электрооборудованием КамАЗ 5490 (лист 2)", "source_url": "https://almarka.ru/shema-jelektricheskaja-principialnaja-sistemy-upravlenija-jelektrooborudovaniem-kamaz-5490"},
+        {"file": "kamaz_5490_electrical_03.jpg", "title": "Схема электрическая принципиальная системы управления электрооборудованием КамАЗ 5490 (лист 3)", "source_url": "https://almarka.ru/shema-jelektricheskaja-principialnaja-sistemy-upravlenija-jelektrooborudovaniem-kamaz-5490"}
+      ]
+    }
+  ]
+}

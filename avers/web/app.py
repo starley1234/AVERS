@@ -1,5 +1,6 @@
 """AVERS Web App - FastAPI application."""
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,46 @@ from fastapi.responses import FileResponse
 
 from avers.web.api import router, rag_router
 from avers.web.annotator_api import router as annotator_router
+from avers.web.active_learning_api import router as active_learning_router
+
+
+def _maybe_start_active_learning_scheduler() -> None:
+    """Auto-start the retrain scheduler if enabled via
+    AVERS_AL_SCHEDULER_ENABLED env var (off by default; also controllable
+    via config.yaml `active_learning.scheduler_enabled` + CLI)."""
+    import os
+
+    enabled = os.environ.get("AVERS_AL_SCHEDULER_ENABLED", "").lower() in ("1", "true", "yes")
+    if not enabled:
+        return
+    try:
+        from avers.active_learning.loop import get_active_learning_loop
+        from avers.active_learning.registry import get_model_registry
+        from avers.active_learning.notify import get_notifier
+        from avers.active_learning.scheduler import get_scheduler
+
+        scheduler = get_scheduler(
+            loop=get_active_learning_loop(),
+            registry=get_model_registry(),
+            notifier=get_notifier(),
+        )
+        scheduler.start()
+    except Exception as e:  # pragma: no cover - defensive, startup must not crash
+        import logging
+
+        logging.getLogger("avers.web").warning(f"Could not start AL scheduler: {e}")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _maybe_start_active_learning_scheduler()
+    yield
+    try:
+        from avers.active_learning.scheduler import get_scheduler
+
+        get_scheduler().stop(timeout=1.0)
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
@@ -16,6 +57,7 @@ def create_app() -> FastAPI:
         title="АВЕРС - Автоматическая Векторизация и Распознавание Схем",
         description="Web UI валидатор для системы АВЕРС + Датасет инструменты + Vision RAG",
         version="0.2.0",
+        lifespan=_lifespan,
     )
     
     # CORS
@@ -31,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(rag_router)
     app.include_router(annotator_router)
+    app.include_router(active_learning_router)
     
     # Static files
     static_dir = Path(__file__).parent / "static"
@@ -69,6 +112,13 @@ def create_app() -> FastAPI:
         if annotator_path.exists():
             return FileResponse(str(annotator_path))
         return {"message": "Annotator not found"}
+
+    @app.get("/dashboard")
+    async def serve_dashboard():
+        dashboard_path = frontend_dir / "dashboard.html"
+        if dashboard_path.exists():
+            return FileResponse(str(dashboard_path))
+        return {"message": "Dashboard not found"}
     
     @app.get("/health")
     async def health_check():
