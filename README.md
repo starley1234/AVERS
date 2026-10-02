@@ -259,6 +259,46 @@ python -m avers rag query --text "junction dot" --image query.jpg --top-k 5
 python -m avers rag stats
 ```
 
+### Active Learning Loop v0.3 (NEW) — валидатор → дообучение
+
+Замыкает цикл: исправления в валидаторе накапливаются → при достижении
+порога сливаются с синтетическим ГОСТ-датасетом → дообучают модель →
+новая версия регистрируется с возможностью promote/rollback/A-B теста.
+Полное описание и план доработки на GPU: [`docs/ACTIVE_LEARNING_V03.md`](docs/ACTIVE_LEARNING_V03.md).
+
+```bash
+# Статистика накопленного feedback
+python -m avers active-learning stats
+
+# Смержить synthetic + feedback в один dataset.yaml (с ремапом классов и oversampling)
+python -m avers active-learning merge-datasets --synthetic /tmp/gost/dataset.yaml \
+    --feedback /tmp/fb/dataset_feedback.yaml --feedback-weight 3 -o /tmp/merged
+
+# Дообучить на merged датасете и зарегистрировать версию
+python -m avers active-learning retrain --synthetic /tmp/gost/dataset.yaml \
+    --model rtdetr-l --epochs 20 --register
+
+# Фоновый планировщик автодообучения (blocking, для cron/systemd)
+python -m avers active-learning scheduler run --interval 3600
+
+# Model Registry: версии, promote/rollback, A/B
+python -m avers active-learning registry list
+python -m avers active-learning registry promote v000002
+python -m avers active-learning registry ab-test v000002 --ratio 0.2
+
+# Web UI: валидатор автоматически собирает feedback, дашборд мониторинга
+AVERS_AL_SCHEDULER_ENABLED=true python -m avers web --port 8000
+# http://localhost:8000/dashboard
+```
+
+Каталог реальных (не синтетических) советских/российских схем для обучения
+(от простых к сложным): [`docs/REAL_SCHEMATICS_SOURCES.md`](docs/REAL_SCHEMATICS_SOURCES.md),
+куратированный пример уже в [`data/reference_schematics/`](data/reference_schematics/README.md).
+
+```bash
+python -m avers dataset real-schematics list --tier tier1_simple_car
+```
+
 ## 📁 Структура проекта
 
 ```
@@ -274,28 +314,45 @@ avers/
 │   ├── stage4_vectorization/ # Скелетизация + RDP
 │   ├── stage5_graph_synthesis/ # NetworkX граф
 │   └── stage6_vlm_arbitrator/ # VLM арбитраж
-├── web/                # NEW: Web UI
-│   ├── app.py          # FastAPI app
-│   ├── api.py          # Основные API + RAG
+├── web/                # Web UI
+│   ├── app.py          # FastAPI app (+ lifespan: auto-start AL scheduler)
+│   ├── api.py          # Основные API + RAG + active-learning stats/retrain/clear
+│   ├── active_learning_api.py # NEW v0.3: scheduler/registry/history/notifications
 │   ├── annotator_api.py # Аннотатор API
 │   └── frontend/
 │       ├── index.html  # Валидатор UI
-│       └── annotator.html # Аннотатор UI
-├── dataset/            # NEW: Датасет инструменты
+│       ├── annotator.html # Аннотатор UI
+│       └── dashboard.html # NEW v0.3: Active Learning dashboard (/dashboard)
+├── dataset/            # Датасет инструменты
 │   ├── gost_symbols.py # Определения ГОСТ УГО
 │   ├── synthetic.py    # SyntheticGenerator
 │   ├── generator.py    # SchematicComposer A2x6
 │   ├── annotator.py    # AnnotationStore
 │   ├── export.py       # YOLO/COCO экспорт
 │   ├── train.py        # Обучение RT-DETR/YOLO
+│   ├── public_datasets.py # Публичные датасеты (pre-training)
+│   ├── merge.py        # NEW v0.3: merge synthetic+feedback(+public) датасетов
+│   ├── real_schematics.py # NEW v0.3: каталог реальных RU/СССР источников
 │   └── cli.py          # CLI
-├── rag/                # NEW: Vision RAG
+├── active_learning/    # v0.3: цикл валидатор -> дообучение
+│   ├── loop.py          # ActiveLearningLoop, FeedbackEntry
+│   ├── metrics.py        # ActiveLearningMetrics
+│   ├── registry.py       # NEW: ModelRegistry (версии, promote/rollback, A/B)
+│   ├── scheduler.py       # NEW: RetrainScheduler (фон/cron)
+│   └── notify.py          # NEW: Notifier (webhook/log/JSONL)
+├── rag/                # Vision RAG
 │   ├── embeddings.py   # CLIP + HOG fallback
 │   ├── store.py        # FAISS + brute-force
 │   └── vision_rag.py   # VisionRAG + few-shot VLM
 ├── pipeline.py         # ProductionPipeline entry
-├── config.py           # Конфигурация (YAML + Pydantic)
-└── main.py             # CLI (process, web, dataset, rag)
+├── config.py           # Конфигурация (YAML + Pydantic, + active_learning section)
+└── main.py             # CLI (process, web, dataset, rag, active-learning)
+
+docs/
+├── ACTIVE_LEARNING_V03.md      # NEW: статус v0.3 + план для GPU-машины
+└── REAL_SCHEMATICS_SOURCES.md  # NEW: каталог реальных RU/СССР схем (simple->complex)
+
+data/reference_schematics/      # NEW: куратированный пример реальных схем (12 файлов)
 ```
 
 ## 🔧 Конфигурация
@@ -341,7 +398,16 @@ dataset:  # NEW
 web:  # NEW
   host: 0.0.0.0
   port: 8000
+
+active_learning:  # NEW v0.3
+  enabled: true
+  min_feedback_for_retrain: 50
+  scheduler_enabled: false       # true -> auto-start RetrainScheduler with `avers web`
+  registry_dir: /tmp/avers_model_registry
+  base_synthetic_dataset_yaml: /tmp/avers_gost/dataset.yaml
+  notify_webhook_url: null
 ```
+Полный список опций (scheduler, registry, merge, notifications) — в `config.yaml` и `docs/ACTIVE_LEARNING_V03.md`.
 
 ## 📊 Выходной формат
 
@@ -448,9 +514,22 @@ torch            # PyTorch
 
 - [x] v0.1 — Production pipeline (6 стадий)
 - [x] v0.2 — Web UI + Synthetic Dataset + Vision RAG
-- [ ] v0.3 — Active learning loop (валидатор → дообучение)
+- [~] v0.3 — Active learning loop (валидатор → дообучение) — **вся CPU-логика готова и протестирована** (scheduler, model registry/A-B, notifications, dataset merge, dashboard); обучение на реальном GPU — следующий шаг. План: [`docs/ACTIVE_LEARNING_V03.md`](docs/ACTIVE_LEARNING_V03.md)
 - [ ] v0.4 — Экспорт в Макс-САПР / КОМПАС-Электрик (нативный)
 - [ ] v0.5 — Multi-page схемы (A2x6 склейка)
+
+Полная дорожная карта с чеклистами: [`ROADMAP.md`](ROADMAP.md).
+
+## 🧑‍💻 Для агентов/разработчиков
+
+- **Начните с [`AGENTS.md`](AGENTS.md)** — как быстро поднять окружение, какие
+  есть известные ловушки (opencv, отсутствие GPU в песочнице), как не тратить
+  токены впустую.
+- Работа над v0.3 Active Learning Loop: [`docs/ACTIVE_LEARNING_V03.md`](docs/ACTIVE_LEARNING_V03.md)
+  (что готово, что осталось сделать на GPU-машине, пошаговый план).
+- Материал для обучения на реальных (не синтетических) схемах:
+  [`docs/REAL_SCHEMATICS_SOURCES.md`](docs/REAL_SCHEMATICS_SOURCES.md) +
+  куратированный пример в [`data/reference_schematics/`](data/reference_schematics/README.md).
 
 ## 📄 Лицензия
 

@@ -96,7 +96,7 @@ class YOLODetector:
                     logger.warning(f"Could not move model to {self.config.device}: {e}")
             
             self._loaded = True
-            logger.info(f"Model loaded successfully")
+            logger.info("Model loaded successfully")
             return True
             
         except ImportError:

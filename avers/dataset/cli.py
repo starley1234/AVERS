@@ -163,7 +163,7 @@ def cmd_public(args):
     
     elif args.public_command == "download":
         print(loader.download_instructions(args.dataset))
-        print(f"\nAfter download, convert to GOST:")
+        print("\nAfter download, convert to GOST:")
         print(f"  python -m avers.dataset.cli public convert --dataset {args.dataset} --input /path/to/dataset --output /tmp/gost_converted")
     
     elif args.public_command == "convert":

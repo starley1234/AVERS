@@ -121,6 +121,16 @@ def create_main_parser() -> argparse.ArgumentParser:
     
     public_strategy = public_sub.add_parser("strategy", help="Рекомендуемая стратегия обучения")
     
+    # Real schematics catalog (NEW in v0.3) - see docs/REAL_SCHEMATICS_SOURCES.md
+    real_parser = dataset_sub.add_parser("real-schematics", help="Каталог источников реальных схем (RU/СССР)")
+    real_sub = real_parser.add_subparsers(dest="real_command")
+    real_list = real_sub.add_parser("list", help="Список источников")
+    real_list.add_argument("--tier", type=str, default=None, help="Фильтр по уровню сложности")
+    real_fetch = real_sub.add_parser("fetch", help="Скачать список конкретных URL (по одному в строке)")
+    real_fetch.add_argument("--urls-file", type=str, required=True, help="Файл со списком URL (по одному на строку)")
+    real_fetch.add_argument("--output", "-o", type=str, required=True, help="Куда сохранить")
+    real_fetch.add_argument("--delay", type=float, default=1.0, help="Задержка между запросами, сек")
+    
     # RAG command
     rag_parser = subparsers.add_parser("rag", help="Vision RAG инструменты")
     rag_sub = rag_parser.add_subparsers(dest="rag_command")
@@ -136,6 +146,42 @@ def create_main_parser() -> argparse.ArgumentParser:
     rag_index.add_argument("--description", type=str, default="")
     
     rag_stats = rag_sub.add_parser("stats", help="Статистика RAG")
+    
+    # Active Learning command (NEW in v0.3)
+    al_parser = subparsers.add_parser("active-learning", help="Цикл активного обучения (валидатор -> дообучение)")
+    al_sub = al_parser.add_subparsers(dest="al_command")
+    
+    al_stats = al_sub.add_parser("stats", help="Статистика накопленного feedback")
+    
+    al_retrain = al_sub.add_parser("retrain", help="Запустить дообучение на feedback (+ опционально synthetic)")
+    al_retrain.add_argument("--model", type=str, default="rtdetr-l", help="Модель для дообучения")
+    al_retrain.add_argument("--epochs", type=int, default=20, help="Эпохи дообучения")
+    al_retrain.add_argument("--synthetic", type=str, default=None, help="Path к synthetic dataset.yaml для merge")
+    al_retrain.add_argument("--feedback-weight", type=int, default=3, help="Oversample вес feedback относительно synthetic")
+    al_retrain.add_argument("--register", action="store_true", help="Зарегистрировать результат в Model Registry")
+    
+    al_merge = al_sub.add_parser("merge-datasets", help="Смержить synthetic + feedback (+ public) в один dataset.yaml")
+    al_merge.add_argument("--synthetic", type=str, required=True, help="Path к synthetic dataset.yaml")
+    al_merge.add_argument("--feedback", type=str, default=None, help="Path к feedback dataset yaml (из active-learning export)")
+    al_merge.add_argument("--feedback-weight", type=int, default=3, help="Oversample вес feedback")
+    al_merge.add_argument("--output", "-o", type=str, required=True, help="Output dir")
+    
+    al_scheduler = al_sub.add_parser("scheduler", help="Фоновый планировщик автодообучения")
+    al_scheduler.add_argument("action", choices=["run"], help="run = блокирующий цикл проверки (cron/systemd-friendly)")
+    al_scheduler.add_argument("--interval", type=int, default=3600, help="Интервал проверки, сек")
+    al_scheduler.add_argument("--threshold", type=int, default=None, help="Порог feedback для дообучения")
+    al_scheduler.add_argument("--model", type=str, default="rtdetr-l")
+    al_scheduler.add_argument("--epochs", type=int, default=20)
+    
+    al_registry = al_sub.add_parser("registry", help="Model Registry: версии, promote, rollback, A/B")
+    al_registry_sub = al_registry.add_subparsers(dest="registry_command")
+    al_registry_sub.add_parser("list", help="Список версий")
+    al_reg_promote = al_registry_sub.add_parser("promote", help="Сделать версию текущей")
+    al_reg_promote.add_argument("version_id", type=str)
+    al_registry_sub.add_parser("rollback", help="Откатиться на предыдущую версию")
+    al_reg_ab = al_registry_sub.add_parser("ab-test", help="Запустить A/B тест challenger-версии")
+    al_reg_ab.add_argument("version_id", type=str)
+    al_reg_ab.add_argument("--ratio", type=float, default=0.1, help="Доля трафика на challenger (0-1]")
     
     # Legacy: if no subcommand, treat first arg as input file
     parser.add_argument("legacy_input", nargs="?", type=Path, help=argparse.SUPPRESS)
@@ -191,7 +237,7 @@ def cmd_process(args) -> int:
         if is_pdf_file:
             logger.info(f"Detected PDF: {input_path}")
             if getattr(args, 'pdf_all', False):
-                logger.info(f"Processing all pages from PDF")
+                logger.info("Processing all pages from PDF")
                 result = load_and_process(input_path, output_path, config, pdf_process_all=True)
             else:
                 pdf_page = getattr(args, 'pdf_page', 0)
@@ -348,6 +394,29 @@ def cmd_dataset(args) -> int:
         
         return 0
     
+    elif args.dataset_command == "real-schematics":
+        from avers.dataset.real_schematics import list_sources, fetch_urls
+
+        if args.real_command == "list" or not args.real_command:
+            sources = list_sources(tier=getattr(args, "tier", None))
+            print(f"\nНайдено {len(sources)} источников реальных схем:\n")
+            for s in sources:
+                print(f"[{s.tier}] {s.name}")
+                print(f"  {s.description}")
+                print(f"  URL: {s.url}")
+                print(f"  ~{s.approx_count}, license: {s.license_note}")
+                print()
+            print("Куратированный пример (12 изображений) уже лежит в data/reference_schematics/")
+            print("Подробности: docs/REAL_SCHEMATICS_SOURCES.md")
+        elif args.real_command == "fetch":
+            urls = [u.strip() for u in Path(args.urls_file).read_text(encoding="utf-8").splitlines() if u.strip()]
+            saved = fetch_urls(urls, Path(args.output), delay_sec=args.delay)
+            print(f"Downloaded {len(saved)}/{len(urls)} images to {args.output}")
+        else:
+            print("real-schematics command required: list, fetch")
+            return 1
+        return 0
+    
     return 1
 
 
@@ -390,6 +459,121 @@ def cmd_rag(args) -> int:
     return 1
 
 
+def cmd_active_learning(args) -> int:
+    """Active Learning Loop (v0.3) tools."""
+    from avers.active_learning.loop import get_active_learning_loop
+
+    if not args.al_command:
+        print("Active-learning command required: stats, retrain, merge-datasets, scheduler, registry", file=sys.stderr)
+        return 1
+
+    if args.al_command == "stats":
+        loop = get_active_learning_loop()
+        stats = loop.get_correction_stats()
+        print(json_dumps(stats))
+        return 0
+
+    elif args.al_command == "retrain":
+        loop = get_active_learning_loop()
+        dataset_yaml = None
+        if args.synthetic:
+            from avers.dataset.merge import DatasetSource, merge_datasets
+
+            feedback_yaml = loop.export_for_training(Path("/tmp/avers_active_learning/feedback_dataset"))
+            sources = [
+                DatasetSource("synthetic", Path(args.synthetic), weight=1),
+                DatasetSource("feedback", feedback_yaml, weight=args.feedback_weight),
+            ]
+            dataset_yaml = merge_datasets(sources, Path("/tmp/avers_active_learning/merged_dataset"))
+            print(f"Merged dataset: {dataset_yaml}")
+
+        if dataset_yaml:
+            from avers.dataset.train import train_rtdetr, train_yolo
+
+            if "rtdetr" in args.model.lower():
+                train_rtdetr(dataset_yaml, f"{args.model}.pt", epochs=args.epochs, batch=4)
+            else:
+                train_yolo(dataset_yaml, f"{args.model}.pt", epochs=args.epochs, batch=4)
+            result = {"status": "success", "dataset_yaml": str(dataset_yaml)}
+        else:
+            result = loop.trigger_retraining(model_type=args.model, epochs=args.epochs)
+
+        print(json_dumps(result))
+
+        if args.register and result.get("status") == "success":
+            from avers.active_learning.registry import get_model_registry
+
+            weights_path = result.get("weights_path")
+            if weights_path:
+                registry = get_model_registry()
+                version = registry.register(
+                    weights_path=weights_path,
+                    model_type=args.model,
+                    dataset_info={"feedback_samples": len(loop.feedback_entries)},
+                    notes="Registered via `avers active-learning retrain --register`",
+                )
+                print(f"Registered as {version.version_id}")
+            else:
+                print("No weights_path in result; skipping registry (train manually then `registry` subcommand)")
+        return 0
+
+    elif args.al_command == "merge-datasets":
+        from avers.dataset.merge import DatasetSource, merge_datasets
+
+        sources = [DatasetSource("synthetic", Path(args.synthetic), weight=1)]
+        if args.feedback:
+            sources.append(DatasetSource("feedback", Path(args.feedback), weight=args.feedback_weight))
+        yaml_path = merge_datasets(sources, Path(args.output))
+        print(f"Merged dataset: {yaml_path}")
+        return 0
+
+    elif args.al_command == "scheduler":
+        from avers.active_learning.scheduler import RetrainScheduler
+        from avers.active_learning.registry import get_model_registry
+        from avers.active_learning.notify import get_notifier
+
+        loop = get_active_learning_loop()
+        scheduler = RetrainScheduler(
+            loop=loop,
+            registry=get_model_registry(),
+            notifier=get_notifier(),
+            check_interval_sec=args.interval,
+            min_feedback_for_retrain=args.threshold,
+            model_type=args.model,
+            epochs=args.epochs,
+        )
+        print(f"Starting scheduler loop (Ctrl+C to stop), interval={args.interval}s")
+        try:
+            scheduler.run_forever()
+        except KeyboardInterrupt:
+            print("Scheduler stopped")
+        return 0
+
+    elif args.al_command == "registry":
+        from avers.active_learning.registry import get_model_registry
+
+        registry = get_model_registry()
+        if args.registry_command == "list" or not args.registry_command:
+            print(json_dumps(registry.status()))
+        elif args.registry_command == "promote":
+            version = registry.promote(args.version_id)
+            print(json_dumps(version.to_dict()))
+        elif args.registry_command == "rollback":
+            version = registry.rollback()
+            print(json_dumps(version.to_dict()) if version else "Nothing to roll back to")
+        elif args.registry_command == "ab-test":
+            print(json_dumps(registry.start_ab_test(args.version_id, traffic_ratio=args.ratio)))
+        return 0
+
+    print(f"Unknown active-learning command: {args.al_command}", file=sys.stderr)
+    return 1
+
+
+def json_dumps(obj) -> str:
+    import json
+    return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+
+
 def main() -> int:
     parser = create_main_parser()
     args = parser.parse_args()
@@ -411,6 +595,8 @@ def main() -> int:
         return cmd_dataset(args)
     elif args.command == "rag":
         return cmd_rag(args)
+    elif args.command == "active-learning":
+        return cmd_active_learning(args)
     else:
         print(f"Unknown command: {args.command}", file=sys.stderr)
         return 1

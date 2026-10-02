@@ -199,3 +199,52 @@ class TestAnnotationStore:
             assert updated is not None
             assert len(updated.annotations) == 1
             assert updated.annotated is True
+
+
+class TestRealSchematics:
+    """Tests for the real (non-synthetic) schematic source catalog (v0.3)."""
+
+    def test_list_sources_all_and_filtered(self):
+        from avers.dataset.real_schematics import list_sources
+
+        all_sources = list_sources()
+        assert len(all_sources) > 5
+        tier1 = list_sources(tier="tier1_simple_car")
+        assert len(tier1) > 0
+        assert all(s.tier == "tier1_simple_car" for s in tier1)
+
+    def test_load_curated_manifest(self):
+        from avers.dataset.real_schematics import load_curated_manifest
+
+        manifest = load_curated_manifest()
+        assert "tiers" in manifest
+        tier_ids = [t["id"] for t in manifest["tiers"]]
+        assert "tier1_simple_car" in tier_ids
+
+        for tier in manifest["tiers"]:
+            for entry in tier["files"]:
+                img_path = (
+                    __import__("avers.dataset.real_schematics", fromlist=["CURATED_SAMPLE_ROOT"]).CURATED_SAMPLE_ROOT
+                    / tier["id"]
+                    / entry["file"]
+                )
+                assert img_path.exists(), f"Missing curated sample image: {img_path}"
+
+    def test_fetch_urls_downloads_local_files(self, tmp_path):
+        from avers.dataset.real_schematics import fetch_urls
+
+        src = tmp_path / "src.jpg"
+        src.write_bytes(b"fake-image-bytes")
+        url = src.resolve().as_uri()
+
+        out_dir = tmp_path / "out"
+        saved = fetch_urls([url], out_dir, delay_sec=0)
+        assert len(saved) == 1
+        assert saved[0].exists()
+        assert saved[0].read_bytes() == b"fake-image-bytes"
+
+    def test_fetch_urls_skips_failures_gracefully(self, tmp_path):
+        from avers.dataset.real_schematics import fetch_urls
+
+        saved = fetch_urls(["http://127.0.0.1:1/does-not-exist.jpg"], tmp_path / "out", delay_sec=0, timeout_sec=1)
+        assert saved == []

@@ -117,6 +117,31 @@ web:
   results_dir: /tmp/avers_results
   max_file_size_mb: 50
 
+# Active Learning Loop (NEW in v0.3) - validator -> retraining
+# See docs/ACTIVE_LEARNING_V03.md for the full design/handoff doc.
+active_learning:
+  enabled: true
+  feedback_dir: /tmp/avers_feedback
+  min_feedback_for_retrain: 50       # threshold to flag "retrain due"
+  retrain_model_type: rtdetr-l
+  retrain_epochs: 20                  # fine-tune epochs, less than from-scratch
+
+  # Auto retraining scheduler (background thread or standalone process)
+  scheduler_enabled: false            # set true to auto-start with `avers web`
+  scheduler_check_interval_sec: 3600  # how often to check should_retrain()
+
+  # Model registry (versioning + A/B testing of retrained models)
+  registry_dir: /tmp/avers_model_registry
+
+  # Dataset merge: combine synthetic GOST data with accumulated feedback
+  # before every retrain run (avoids catastrophic forgetting of rare classes)
+  base_synthetic_dataset_yaml: null   # e.g. /tmp/avers_gost/dataset.yaml
+  feedback_oversample_weight: 3       # replicate feedback N times vs synthetic
+
+  # Notifications (retrain_due / retrain_started / retrain_done / retrain_failed)
+  notify_webhook_url: null            # e.g. Slack/Mattermost/n8n incoming webhook
+  notify_log_file: /tmp/avers_feedback/notifications.jsonl
+
 # Output Format
 output:
   default_format: json         # 'json' or 'xml'

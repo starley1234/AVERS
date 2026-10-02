@@ -1,2 +1,44 @@
 __pycache__/
 *.pyc
+*.pyo
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Build / packaging
+*.egg-info/
+build/
+dist/
+
+# Test / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# AVERS runtime artifacts (generated, never commit)
+/tmp_avers*/
+*.onnx
+*.pt
+*.pth
+avers_runs/
+avers_dataset/
+avers_feedback/
+avers_model_registry/
+avers_rag/
+
+# Real schematic reference images: see data/reference_schematics/README.md.
+# Keep a small curated sample committed for smoke-testing (tracked below),
+# but any bulk/raw downloads done by `avers dataset real-schematics download`
+# or similar scraping scripts should stay local/out of git.
+data/reference_schematics/raw/
+data/reference_schematics/*/raw/

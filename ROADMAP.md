@@ -21,20 +21,38 @@
 - **Docker**: Dockerfile + docker-compose with qdrant/minio profiles
 - **Tests**: 38 new tests (dataset, rag, web), quickstart.py, CI workflow
 
-## 🔄 v0.3 - Active Learning Loop (Next - In Progress)
-- [x] ActiveLearningLoop base (done)
-- [x] Web UI integration for feedback (done - resolve_issue now adds to loop + RAG)
-- [ ] Auto retraining scheduler (cron/background job)
-- [ ] Model versioning and A/B testing
-- [ ] Metrics dashboard (accuracy improvement over time)
-- [ ] Notification when retrain needed
-- [ ] Merge synthetic + feedback datasets for training
+## 🔄 v0.3 - Active Learning Loop (CPU part done - GPU training remaining)
 
-**CLI:**
+> Полный статус, что проверено, и пошаговый план для GPU-машины:
+> **`docs/ACTIVE_LEARNING_V03.md`**. Реальные (не синтетические) схемы для
+> обучения: **`docs/REAL_SCHEMATICS_SOURCES.md`** + `data/reference_schematics/`.
+
+- [x] ActiveLearningLoop base (done, v0.2)
+- [x] Web UI integration for feedback (done, v0.2 - resolve_issue adds to loop + RAG)
+- [x] Auto retraining scheduler (cron/background job) — `avers/active_learning/scheduler.py` (`RetrainScheduler`), CLI `avers active-learning scheduler run`, API `/api/active-learning/scheduler/{start,stop,status}`
+- [x] Model versioning and A/B testing — `avers/active_learning/registry.py` (`ModelRegistry`: register/promote/rollback/compare/start_ab_test/route), CLI `avers active-learning registry`, API `/api/active-learning/registry/*`
+- [x] Metrics dashboard (accuracy improvement over time) — `/dashboard` (`avers/web/frontend/dashboard.html`) + `GET /api/active-learning/history`
+- [x] Notification when retrain needed — `avers/active_learning/notify.py` (`Notifier`: log/webhook/JSONL), wired into scheduler
+- [x] Merge synthetic + feedback datasets for training — `avers/dataset/merge.py` (`merge_datasets`, handles class remap + oversampling), CLI `avers active-learning merge-datasets` / `retrain --synthetic ...`
+- [x] Bugfix: `get_rag` wasn't exported from `avers/rag/__init__.py`, silently breaking RAG auto-indexing on feedback — fixed
+- [x] 29 new unit tests (`tests/test_active_learning.py`), all CPU-only (no torch/ultralytics/GPU required)
+- [ ] **Train & validate a real model on a GPU machine** (the only remaining item that actually needs a GPU — everything above is implemented and tested without one)
+- [ ] Wire `ModelRegistry.get_current()` into `ProductionPipeline`'s detection model loading (currently independent - see docs/ACTIVE_LEARNING_V03.md §5)
+- [ ] Replace placeholder `metrics={}` on retrain with real mAP parsed from ultralytics training results
+
+**CLI (v0.2 + v0.3):**
 ```bash
-python -m avers web --port 8000  # validator now auto-collects feedback
+python -m avers web --port 8000  # validator auto-collects feedback; http://localhost:8000/dashboard
 curl http://localhost:8000/api/active-learning/stats
 curl -X POST http://localhost:8000/api/active-learning/retrain?model_type=rtdetr-l&epochs=20
+
+# v0.3 additions
+python -m avers active-learning stats
+python -m avers active-learning merge-datasets --synthetic /tmp/gost/dataset.yaml --feedback /tmp/fb/dataset_feedback.yaml -o /tmp/merged
+python -m avers active-learning retrain --synthetic /tmp/gost/dataset.yaml --model rtdetr-l --epochs 20 --register
+python -m avers active-learning scheduler run --interval 3600          # blocking, cron/systemd-friendly
+python -m avers active-learning registry list
+python -m avers dataset real-schematics list --tier tier1_simple_car   # real RU/USSR schematic sources catalog
 ```
 
 ## 📋 v0.4 - Native CAD Export
@@ -90,22 +108,25 @@ curl -X POST http://localhost:8000/api/active-learning/retrain?model_type=rtdetr
 
 ## Что нужно сделать сейчас? (Приоритеты)
 
-### Высокий приоритет (для MVP)
-1. **Собрать реальный датасет** - отсканировать 20-50 схем БКС, разметить через /annotator
-2. **Обучить модель** - запустить `avers dataset generate` + `avers dataset train` на реальном GPU
-3. **Протестировать на реальных сканах** - прогнать через pipeline, собрать feedback
-4. **Настроить Active Learning** - подключить retrain scheduler
+### Высокий приоритет (для v0.3 / MVP) — см. docs/ACTIVE_LEARNING_V03.md
+1. **Обучить базовую модель на GPU** - `avers dataset generate` (крупный, 3000+) + `avers dataset train` на реальном GPU, зарегистрировать в Model Registry
+2. **Собрать реальный датасет БКС-аналогов** - начать с `docs/REAL_SCHEMATICS_SOURCES.md` (Tier 1: простые авто-схемы → Tier 2: радиосхемы → Tier 3: грузовики), разметить через /annotator; `data/reference_schematics/` уже содержит 12 стартовых примеров
+3. **Запустить Active Learning end-to-end на реальных данных** - `avers web` с `AVERS_AL_SCHEDULER_ENABLED=true`, собрать feedback, дать scheduler'у дообучить и зарегистрировать новую версию
+4. **Подключить Model Registry к ProductionPipeline** - чтобы promote/rollback реально переключали модель в проде (сейчас независимые компоненты, см. docs/ACTIVE_LEARNING_V03.md §5)
+5. **Протестировать на реальных сканах заказчика** (если доступны) - прогнать через pipeline, собрать feedback - это золотой стандарт, сильнее любого открытого аналога
 
 ### Средний приоритет
-5. **Docker production** - протестировать docker-compose с GPU
-6. **Экспорт в САПР** - исследовать форматы Max-САПР, КОМПАС
-7. **Улучшить OCR** - дообучить PaddleOCR на ГОСТ шрифтах (ГОСТ 2.304)
-8. **Добавить больше ГОСТ символов** - реле, контакторы, etc.
+6. **Docker production** - протестировать docker-compose с GPU
+7. **Экспорт в САПР** - исследовать форматы Max-САПР, КОМПАС
+8. **Улучшить OCR** - дообучить PaddleOCR на ГОСТ шрифтах (ГОСТ 2.304)
+9. **Добавить больше ГОСТ символов** - реле, контакторы, etc.
+10. **Реальные mAP метрики в Model Registry** вместо заглушки (см. docs/ACTIVE_LEARNING_V03.md)
 
 ### Низкий приоритет (nice to have)
-9. **SAM integration** для аннотатора
-10. **Qdrant** вместо FAISS
-11. **K8s deployment**
+11. **SAM integration** для аннотатора
+12. **Qdrant** вместо FAISS
+13. **K8s deployment**
+14. Унифицировать `avers/dataset/public_datasets.py::create_mixed_dataset_config` и `avers/dataset/merge.py::merge_datasets` (сейчас решают похожую задачу двумя путями по историческим причинам)
 
 ---
 

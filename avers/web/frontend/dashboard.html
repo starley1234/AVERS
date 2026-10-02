@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>АВЕРС — Active Learning Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0b;
+  --bg2: #141416;
+  --bg3: #1c1c1f;
+  --bg4: #26262b;
+  --border: #2a2a30;
+  --border2: #3a3a44;
+  --text: #e8e8ec;
+  --text2: #9a9aa3;
+  --text3: #5a5a66;
+  --accent: #6c5cff;
+  --accent2: #8b7cff;
+  --green: #22c55e;
+  --yellow: #eab308;
+  --red: #ef4444;
+  --blue: #3b82f6;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+.header {
+  height: 56px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+}
+.logo { display:flex; align-items:center; gap:12px; font-weight:700; }
+.logo-mark { width:32px; height:32px; background:var(--accent); border-radius:8px; display:flex; align-items:center; justify-content:center; font-family:'JetBrains Mono',monospace; }
+.nav a { color: var(--text2); text-decoration:none; margin-left:20px; font-size:14px; }
+.nav a:hover { color: var(--text); }
+main { max-width: 1200px; margin: 0 auto; padding: 24px; display:grid; gap:20px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.card { background: var(--bg2); border:1px solid var(--border); border-radius:16px; padding:20px; }
+.card h2 { font-size: 13px; text-transform:uppercase; letter-spacing:.05em; color:var(--text2); margin-bottom:12px; font-weight:600;}
+.stat { font-size: 36px; font-weight:700; font-family:'JetBrains Mono',monospace; }
+.stat-sub { color: var(--text2); font-size:13px; margin-top:4px; }
+.pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-family:'JetBrains Mono',monospace; }
+.pill.on { background: rgba(34,197,94,.15); color:var(--green); }
+.pill.off { background: rgba(239,68,68,.15); color:var(--red); }
+table { width:100%; border-collapse: collapse; font-size:13px; }
+th, td { text-align:left; padding:6px 4px; border-bottom:1px solid var(--border); }
+th { color:var(--text2); font-weight:500; }
+.wide { grid-column: 1 / -1; }
+button { background: var(--accent); color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer; margin-right:8px; }
+button.secondary { background: var(--bg4); color: var(--text); }
+button:hover { opacity: .9; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+.muted { color: var(--text3); font-size:12px; }
+.bar { height:8px; background:var(--bg4); border-radius:4px; overflow:hidden; margin-top:6px; }
+.bar > div { height:100%; background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo"><div class="logo-mark">А</div> АВЕРС — Active Learning</div>
+  <div class="nav">
+    <a href="/">Валидатор</a>
+    <a href="/annotator">Аннотатор</a>
+    <a href="/dashboard">Dashboard</a>
+    <a href="/docs">API</a>
+  </div>
+</div>
+<main>
+  <div class="card">
+    <h2>Feedback накоплено</h2>
+    <div class="stat" id="stat-total">—</div>
+    <div class="stat-sub" id="stat-files">—</div>
+  </div>
+
+  <div class="card">
+    <h2>Scheduler</h2>
+    <div><span class="pill off" id="sched-pill">—</span></div>
+    <div class="stat-sub" id="sched-info">—</div>
+    <div class="row">
+      <button onclick="startScheduler()">Старт</button>
+      <button class="secondary" onclick="stopScheduler()">Стоп</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Текущая модель</h2>
+    <div class="stat" id="current-version">—</div>
+    <div class="stat-sub" id="current-metrics">—</div>
+    <div class="row">
+      <button class="secondary" onclick="rollback()">Откатить</button>
+    </div>
+  </div>
+
+  <div class="card wide">
+    <h2>Топ исправлений (original → corrected)</h2>
+    <table id="corrections-table">
+      <thead><tr><th>Исправление</th><th>Count</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="muted">Данные из /api/active-learning/history</div>
+  </div>
+
+  <div class="card wide">
+    <h2>Версии моделей (registry)</h2>
+    <table id="versions-table">
+      <thead><tr><th>ID</th><th>Тип</th><th>Статус</th><th>Создана</th><th>Метрики</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</main>
+<script>
+async function j(url, opts) { const r = await fetch(url, opts); return r.json(); }
+
+async function refresh() {
+  try {
+    const stats = await j('/api/active-learning/stats');
+    document.getElementById('stat-total').textContent = stats.total ?? 0;
+    document.getElementById('stat-files').textContent = `${stats.unique_files ?? 0} файлов, ${stats.unique_users ?? 0} пользователей`;
+  } catch (e) {}
+
+  try {
+    const history = await j('/api/active-learning/history');
+    const tbody = document.querySelector('#corrections-table tbody');
+    tbody.innerHTML = '';
+    (history.most_corrected_classes || []).forEach(([label, count]) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${label}</td><td>${count}</td>`;
+      tbody.appendChild(tr);
+    });
+  } catch (e) {}
+
+  try {
+    const sched = await j('/api/active-learning/scheduler/status');
+    const pill = document.getElementById('sched-pill');
+    pill.textContent = sched.running ? 'running' : 'stopped';
+    pill.className = 'pill ' + (sched.running ? 'on' : 'off');
+    document.getElementById('sched-info').textContent =
+      `checks: ${sched.total_checks}, retrains: ${sched.total_retrains}, interval: ${sched.check_interval_sec}s`;
+  } catch (e) {}
+
+  try {
+    const reg = await j('/api/active-learning/registry');
+    document.getElementById('current-version').textContent = reg.current || 'нет';
+    const current = (reg.versions || []).find(v => v.version_id === reg.current);
+    document.getElementById('current-metrics').textContent = current ? JSON.stringify(current.metrics) : '—';
+
+    const tbody = document.querySelector('#versions-table tbody');
+    tbody.innerHTML = '';
+    (reg.versions || []).forEach(v => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${v.version_id}</td><td>${v.model_type}</td><td>${v.status}</td><td>${(v.created_at||'').slice(0,19)}</td><td>${JSON.stringify(v.metrics)}</td>`;
+      tbody.appendChild(tr);
+    });
+  } catch (e) {}
+}
+
+async function startScheduler() { await j('/api/active-learning/scheduler/start', {method:'POST'}); refresh(); }
+async function stopScheduler() { await j('/api/active-learning/scheduler/stop', {method:'POST'}); refresh(); }
+async function rollback() { await j('/api/active-learning/registry/rollback', {method:'POST'}); refresh(); }
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

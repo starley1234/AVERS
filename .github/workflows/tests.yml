@@ -1,0 +1,54 @@
+name: Tests
+
+# CPU-only CI: runs the test suite and static analysis on every push/PR.
+# No GPU/ML deps (torch, ultralytics, paddleocr, faiss, transformers) are
+# installed here - those paths are covered by mocks/fallbacks in the test
+# suite itself (see AGENTS.md "Что НЕ установлено в CI/песочнице").
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # NOTE: install only opencv-python-headless (via extras below), never
+          # opencv-python too - both provide `cv2` and installing both breaks
+          # the package. See requirements.txt for details.
+          pip install -e ".[dev,web]"
+
+      - name: Lint with ruff (errors only, non-blocking on style)
+        run: |
+          ruff check avers/ --select E9,F821,F823,F811
+        continue-on-error: false
+
+      - name: Run test suite
+        run: |
+          pytest tests/ -v --cov=avers --cov-report=term-missing
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage
+          retention-days: 14

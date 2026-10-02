@@ -591,7 +591,7 @@ class aversPipeline:
         image_path = Path(image_path)
 
         self.logger.info("=" * 60)
-        self.logger.info(f"AVERS Pipeline Starting")
+        self.logger.info("AVERS Pipeline Starting")
         self.logger.info(f"Input: {image_path}")
         self.logger.info("=" * 60)
 

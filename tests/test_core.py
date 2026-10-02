@@ -223,6 +223,31 @@ class TestGraphBuilder:
         snapping = builder.snap_wire_to_pins()
         assert snapping[0] is not None
 
+    def test_visualize_returns_image(self):
+        """Regression test: GraphBuilder.visualize() used to crash with
+        UnboundLocalError on `cv2` (a stray `import cv2` was placed inside an
+        `if output_path:` branch later in the same method, which made Python
+        treat `cv2` as function-local for the *whole* method - including the
+        cv2.line()/cv2.circle() calls earlier in the function body that ran
+        before that branch). Fixed by importing cv2 at module level."""
+        builder = GraphBuilder()
+        builder.add_wire_segment(start=(0, 0), end=(100, 100))
+        builder.add_component_pins([
+            PinReference(component_id="X1", pin_number="1", coord=(50, 50)),
+        ])
+
+        vis = builder.visualize()
+
+        assert isinstance(vis, np.ndarray)
+        assert vis.ndim == 3 and vis.shape[2] == 3
+        # Should have actually drawn something (not a blank white/black canvas).
+        assert not np.all(vis == vis[0, 0])
+
+    def test_visualize_empty_graph_returns_blank_canvas(self):
+        builder = GraphBuilder()
+        vis = builder.visualize()
+        assert vis.shape == (100, 100, 3)
+
     def test_build_graph(self):
         """Test NetworkX graph building."""
         builder = GraphBuilder()
