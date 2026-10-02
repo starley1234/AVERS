@@ -44,7 +44,7 @@ async def upload_image(file: UploadFile = File(...)):
     try:
         pil_img = Image.open(save_path)
         w, h = pil_img.size
-    except:
+    except Exception:
         w, h = 1024, 1024
     
     img = store.add_image(save_path, w, h)

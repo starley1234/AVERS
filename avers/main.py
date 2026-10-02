@@ -237,7 +237,7 @@ def cmd_process(args) -> int:
         if is_pdf_file:
             logger.info(f"Detected PDF: {input_path}")
             if getattr(args, 'pdf_all', False):
-                logger.info(f"Processing all pages from PDF")
+                logger.info("Processing all pages from PDF")
                 result = load_and_process(input_path, output_path, config, pdf_process_all=True)
             else:
                 pdf_page = getattr(args, 'pdf_page', 0)

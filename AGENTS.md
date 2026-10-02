@@ -33,7 +33,7 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt            # core deps, ~30 сек, работает без GPU/интернета к ML-хабам
-python -m pytest tests/ -q                 # должно быть "140 passed" (на момент этой правки) без единой ML-библиотеки
+python -m pytest tests/ -q                 # должно быть "142 passed" (на момент этой правки) без единой ML-библиотеки
 ```
 
 Это баз для 95% задач (web UI, dataset tools, active learning логика, графы,
@@ -121,7 +121,36 @@ config.yaml        # полный конфиг со всеми секциями,
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/ -q          # 140 passed, 0 failed (без ML extras)
+python -m pytest tests/ -q          # 142 passed, 0 failed (без ML extras)
+ruff check avers/ --select E9,F821,F823,F811  # реальные баги (не стиль) — должно быть "All checks passed!"
 python -m avers active-learning stats                       # CLI работает
 python -c "from avers.web.app import create_app; create_app()"  # web app собирается
 ```
+
+Есть CI (`.github/workflows/tests.yml`): на каждый push/PR гоняет pytest +
+точечный ruff-линт (`E9,F821,F823,F811` — синтаксис и реально неопределённые
+имена, НЕ стилевые правила) на Python 3.11 и 3.12, без единой ML-зависимости.
+
+## Известные/уже исправленные ловушки (чтобы не наступать повторно)
+
+- `ruff check avers/ --select F821,F823,F811` один раз уже нашёл реальный баг:
+  в `avers/stages/stage5_graph_synthesis/graph_builder.py` метод
+  `GraphBuilder.visualize()` падал с `UnboundLocalError: cv2` при любом
+  вызове — локальный `import cv2` внутри `if output_path:` делал имя `cv2`
+  function-local для всего метода целиком (включая более ранние вызовы
+  `cv2.line/circle`). Метод не вызывался нигде в коде/тестах, поэтому 140
+  прошедших тестов этого не ловили. Исправлено: `import cv2` перенесён на
+  уровень модуля; добавлен регрессионный тест
+  `tests/test_core.py::TestGraphBuilder::test_visualize_returns_image`.
+  **Вывод:** весь `avers/` никогда не прогонялся через `ruff`/`mypy` до этой
+  правки — весь остальной `--statistics` вывод (~1000 находок) это в основном
+  стилевые/модернизационные вещи (non-pep585 аннотации, неотсортированные
+  импорты), НЕ баги; не тратьте токены на их массовое исправление одним
+  большим диффом без запроса пользователя — риск конфликтов выше пользы.
+- `avers/dataset/synthetic.py` содержал мёртвый no-op
+  `GOSTGenerator = GOSTGenerator` (ничего не алиасил) — удалён.
+- Голые `except:` в `avers/rag/store.py` и `avers/web/annotator_api.py`
+  заменены на `except Exception:` (чтобы не глотать `KeyboardInterrupt`/
+  `SystemExit`). Остальные `except Exception: pass` в `avers/web/api.py` и
+  др. — осознанный fallback-паттерн (graceful degradation при отсутствии
+  RAG/FAISS), трогать не нужно.

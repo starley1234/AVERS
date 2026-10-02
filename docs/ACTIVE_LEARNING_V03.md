@@ -23,7 +23,7 @@ Web UI валидатор → пользователь исправляет ош
 
 Всё из списка ниже было реализовано/проверено в этой сессии **без GPU** —
 логика полностью CPU-only и не зависит от torch/ultralytics (они опциональны
-и подключаются лениво только в момент реального обучения). 140/140 тестов
+и подключаются лениво только в момент реального обучения). 142/142 тестов
 проходят (`python -m pytest tests/ -q`).
 
 | Компонент | Файл | Статус |
@@ -64,7 +64,7 @@ git checkout arena/01a0fbb1-avers   # эта ветка
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install ultralytics sahi paddleocr transformers torch faiss-cpu  # [ml] extras, нужен CUDA-билд torch под вашу GPU
-python -m pytest tests/ -q   # должно быть 140 passed (без GPU) - подтверждает что ничего не сломалось при установке ML-зависимостей
+python -m pytest tests/ -q   # должно быть 142 passed (без GPU) - подтверждает что ничего не сломалось при установке ML-зависимостей
 ```
 ⚠️ Не ставьте одновременно `opencv-python` и `opencv-python-headless` (см.
 комментарий в `requirements.txt`) — ломает `cv2` целиком.
@@ -167,7 +167,7 @@ merge-ит feedback+synthetic → дообучает → регистрируе�
 
 ```bash
 python -m pytest tests/test_active_learning.py -v   # 29 тестов: loop, metrics, registry, notify, scheduler, merge
-python -m pytest tests/ -q                           # полный набор, 140 тестов
+python -m pytest tests/ -q                           # полный набор, 142 теста
 ```
 Все тесты в `tests/test_active_learning.py` используют `tmp_path` и
 dependency-injected `retrain_fn`/`copy_weights=False` там, где нужно обойти

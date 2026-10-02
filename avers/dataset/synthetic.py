@@ -413,6 +413,3 @@ class GOSTGenerator(SyntheticGenerator):
             cv2.line(img, (mid_x, y1), (mid_x, y2), (0,0,0), 2)
             cv2.line(img, (mid_x, y2), (x2, y2), (0,0,0), 2)
 
-
-# Алиас для обратной совместимости
-GOSTGenerator = GOSTGenerator

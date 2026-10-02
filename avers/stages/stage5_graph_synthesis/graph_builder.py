@@ -12,6 +12,7 @@ Implements:
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Set, Iterator
 from pathlib import Path
+import cv2
 import networkx as nx
 import numpy as np
 from scipy.spatial import KDTree
@@ -557,7 +558,6 @@ class GraphBuilder:
                 cv2.circle(vis, (x, y), 8, (0, 0, 255), -1)
 
         if output_path:
-            import cv2
             cv2.imwrite(str(output_path), vis)
 
         return vis
@@ -575,7 +575,3 @@ class GraphBuilder:
                 coord_to_nodes[coord].append(node)
 
         return coord_to_nodes
-
-
-# Import cv2 for visualization
-import cv2

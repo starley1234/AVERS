@@ -183,7 +183,7 @@ class FAISSStore(VectorStore):
             try:
                 import faiss
                 self.faiss_index = faiss.IndexFlatIP(self.dim)
-            except:
+            except Exception:
                 pass
     
     def save(self, path: Path):
