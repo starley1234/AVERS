@@ -42,3 +42,7 @@ avers_rag/
 # or similar scraping scripts should stay local/out of git.
 data/reference_schematics/raw/
 data/reference_schematics/*/raw/
+
+# Windows start/stop scripts
+logs/
+.avers_web.pid

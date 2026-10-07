@@ -1,4 +1,4 @@
-# AGENTS.md — инструкция для коддинг-агентов, работающих в этом репозитории
+﻿# AGENTS.md — инструкция для коддинг-агентов, работающих в этом репозитории
 
 Этот файл — чтобы следующий агент (или вы сами на другой машине) не тратил
 токены/время на то, что уже выяснено. Прочитайте его целиком перед тем, как
@@ -21,6 +21,14 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
   в этой сессии** (scheduler, model registry, notifications, dataset merge,
   dashboard, CLI). Единственное, что требует GPU — собственно запуск
   обучения на реальных данных. Подробный план и чеклист: **`docs/ACTIVE_LEARNING_V03.md`**.
+- **v0.4 (эта правка): работа без обученных весов.** Библиотека УГО расширена
+  до 31 класса реальных элементов по ЕСКД. Резистор теперь по ГОСТ 2.728
+  (прямоугольник), а не ANSI-зигзаг. Добавлен CPU-детектор по шаблонам
+  библиотеки, демо-схема БКС с эталонным netlist (`data/demo_bks_schematic.*`)
+  и кнопка «Демо-схема» в Web UI. Демо даёт 19/19 компонентов и 11/11 цепей.
+  Всё описано в **`docs/GOST_LIBRARY_AND_TEMPLATE_DETECTOR.md`**. Новые классы
+  добавляйте в `GOST_SYMBOLS` и зеркально в `avers/core/types.py::DETECTION_CLASSES`
+  (это проверяет тест).
 - Каталог реальных (не синтетических) референсных схем для обучения:
   `data/reference_schematics/` + `docs/REAL_SCHEMATICS_SOURCES.md`.
 
@@ -33,7 +41,7 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt            # core deps, ~30 сек, работает без GPU/интернета к ML-хабам
-python -m pytest tests/ -q                 # должно быть "142 passed" (на момент этой правки) без единой ML-библиотеки
+python -m pytest tests/ -q                 # должно быть "214 passed" (на момент этой правки) без единой ML-библиотеки
 ```
 
 Это баз для 95% задач (web UI, dataset tools, active learning логика, графы,
@@ -121,7 +129,7 @@ config.yaml        # полный конфиг со всеми секциями,
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/ -q          # 142 passed, 0 failed (без ML extras)
+python -m pytest tests/ -q          # 214 passed, 0 failed (без ML extras), ~60 сек
 ruff check avers/ --select E9,F821,F823,F811  # реальные баги (не стиль) — должно быть "All checks passed!"
 python -m avers active-learning stats                       # CLI работает
 python -c "from avers.web.app import create_app; create_app()"  # web app собирается

@@ -73,7 +73,14 @@ class SlicedDetector:
         device: str = "cpu",
         slice_size: int = 1024,
         overlap_ratio: float = 0.2,
+        template_fallback: bool = False,
+        template_min_score: float = 0.62,
+        template_px_per_mm: Optional[float] = None,
     ):
+        self.template_fallback = template_fallback
+        self.template_min_score = template_min_score
+        self.template_px_per_mm = template_px_per_mm
+        self._template = None
         self.model_path = model_path
         self.model_type = model_type
         self.confidence_threshold = confidence_threshold
@@ -134,10 +141,19 @@ class SlicedDetector:
         return True
     
     def _load_fallback_model(self) -> bool:
-        """Continue without classifications when no trained model is available."""
+        """No trained model: use the GOST template detector (if enabled) or skip."""
+        self._loaded = True
+        if self.template_fallback:
+            from avers.stages.stage2_detection.template_detector import GOSTTemplateDetector
+            self._template = GOSTTemplateDetector(
+                min_score=self.template_min_score,
+                px_per_mm=self.template_px_per_mm,
+            )
+            self.backend = "gost_templates"
+            logger.info("No trained detector; using GOST template detector (CPU)")
+            return True
         logger.warning("No trained detector available; component classification skipped")
         self.backend = "unavailable"
-        self._loaded = True
         return True
     
     def detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
@@ -155,6 +171,8 @@ class SlicedDetector:
         
         if self.backend == "sahi":
             return self._sahi_detect(image)
+        if self.backend == "gost_templates" and self._template is not None:
+            return self._template.detect(image)
         return self._fallback_detect(image)
     
     def _sahi_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
@@ -327,11 +345,43 @@ class WireVectorizer:
         rdp_epsilon: float = 2.0,
         min_line_length: int = 20,
         exclusion_padding: int = 5,
+        hough_threshold: int = 20,
     ):
+        self.hough_threshold = hough_threshold
         self.rdp_epsilon = rdp_epsilon
         self.min_line_length = min_line_length
         self.exclusion_padding = exclusion_padding
     
+    @staticmethod
+    def _extend_along_ink(
+        origin: Tuple[int, int], end: Tuple[int, int], support: np.ndarray, max_ext: int = 40,
+    ) -> Tuple[int, int]:
+        """Move ``end`` away from ``origin`` while ``support`` has ink."""
+        dx, dy = end[0] - origin[0], end[1] - origin[1]
+        norm = float(np.hypot(dx, dy))
+        if norm == 0:
+            return end
+        ux, uy = dx / norm, dy / norm
+        height, width = support.shape[:2]
+        best = end
+        for k in range(1, max_ext + 1):
+            x = int(round(end[0] + ux * k))
+            y = int(round(end[1] + uy * k))
+            if not (0 <= x < width and 0 <= y < height) or support[y, x] == 0:
+                break
+            best = (x, y)
+        return best
+
+    @staticmethod
+    def _stroke_width(binary: np.ndarray) -> float:
+        """Mean stroke width = ink area / skeleton length (inf if no ink)."""
+        ink = binary > 0
+        if not ink.any():
+            return float("inf")
+        from skimage import morphology
+        length = int(morphology.skeletonize(ink).sum())
+        return float(ink.sum()) / max(1, length)
+
     def vectorize(
         self,
         image: np.ndarray,
@@ -360,11 +410,27 @@ class WireVectorizer:
             cv2.THRESH_BINARY_INV,
             blockSize=11, C=2,
         )
+        # The local threshold alone turns paper grain / sensor noise into ink.
+        # Keep only pixels that are also dark globally (Otsu, with a margin),
+        # unless the page is not bimodal at all (then Otsu is meaningless).
+        otsu_t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        dark = gray < min(255, otsu_t + 20)
+        if 0.0 < dark.mean() < 0.35:
+            thresh[~dark] = 0
+            # remove speckles much smaller than any wire piece
+            n, labels, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
+            small = np.flatnonzero(stats[1:, cv2.CC_STAT_AREA] < 12) + 1
+            if small.size:
+                thresh[np.isin(labels, small)] = 0
         
         # Clean up
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        # Opening with a 3x3 kernel removes noise but also erases every line
+        # thinner than 3 px (typical for CAD exports / 150 dpi scans). Apply it
+        # only when the strokes are clearly thicker than the kernel.
+        if self._stroke_width(thresh) >= 4.0:
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
         
         # Apply exclusion mask
         if exclusion_bboxes:
@@ -384,9 +450,12 @@ class WireVectorizer:
         skeleton = (skeleton * 255).astype(np.uint8)
         
         # Extract lines
+        # threshold = minimum number of skeleton pixels voting for a line. 50
+        # dropped every wire shorter than ~50 px, i.e. most leads between two
+        # closely placed УГО (after their bboxes are erased) on CAD drawings.
         lines = cv2.HoughLinesP(
             skeleton, rho=1, theta=np.pi/180,
-            threshold=50,
+            threshold=self.hough_threshold,
             minLineLength=self.min_line_length,
             maxLineGap=10,
         )
@@ -420,6 +489,20 @@ class WireVectorizer:
                     if ink.mean() < 0.85 and np.count_nonzero(gaps >= 3) >= 2:
                         continue
 
+                # Near-axis Hough lines (1 px drift) -> exactly orthogonal, so
+                # T/collinear joins in Stage 5 compare equal coordinates.
+                if dy <= 1 and dx >= 10:
+                    y1 = y2 = int(round((y1 + y2) / 2))
+                elif dx <= 1 and dy >= 10:
+                    x1 = x2 = int(round((x1 + x2) / 2))
+                # HoughLinesP usually stops a few px short of corners, T-joins
+                # and the erased component bboxes. Extend both ends while the
+                # original skeleton continues in the same direction.
+                (x1, y1), (x2, y2) = (
+                    self._extend_along_ink((x2, y2), (x1, y1), support),
+                    self._extend_along_ink((x1, y1), (x2, y2), support),
+                )
+
                 # RDP simplification (single segment = no simplification needed)
                 segments.append(WireSegment(
                     segment_id=len(segments),
@@ -429,11 +512,118 @@ class WireVectorizer:
                     confidence=0.9,
                 ))
 
-                # Track endpoints as potential junctions
-                junctions.add((x1, y1))
-                junctions.add((x2, y2))
+        segments = self._drop_contained(segments)
+        segments = self._drop_isolated_short(segments, exclusion_bboxes or [])
+        for seg in segments:
+            # Track endpoints as potential junctions
+            junctions.add(seg.start)
+            junctions.add(seg.end)
 
         return segments, junctions
+
+    def _drop_isolated_short(
+        self,
+        segments: List[WireSegment],
+        exclusion_bboxes: List[Tuple[int, int, int, int]],
+        short: float = 50.0,
+        tol: float = 4.0,
+    ) -> List[WireSegment]:
+        """Drop short segments touching neither another wire nor a component.
+
+        The low Hough threshold is needed for short leads between closely
+        placed УГО, but it also turns single dashes of a page frame and
+        strokes of letters into "wires". Those are isolated; real short wires
+        end at a component (its erased bbox) or at another wire.
+        """
+        if not segments:
+            return segments
+        reach = self.exclusion_padding + tol
+        boxes = [(x0 - reach, y0 - reach, x1 + reach, y1 + reach)
+                 for x0, y0, x1, y1 in exclusion_bboxes]
+
+        def near_box(p):
+            return any(b[0] <= p[0] <= b[2] and b[1] <= p[1] <= b[3] for b in boxes)
+
+        def dist(p, a, b):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            ll = dx * dx + dy * dy
+            if ll == 0:
+                return float(np.hypot(p[0] - a[0], p[1] - a[1]))
+            t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / ll))
+            return float(np.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy))
+
+        cell = 32
+        grid: Dict[Tuple[int, int], List[int]] = {}
+        for i, seg in enumerate(segments):
+            x0 = int((min(seg.start[0], seg.end[0]) - tol) // cell)
+            x1 = int((max(seg.start[0], seg.end[0]) + tol) // cell)
+            y0 = int((min(seg.start[1], seg.end[1]) - tol) // cell)
+            y1 = int((max(seg.start[1], seg.end[1]) + tol) // cell)
+            for cx in range(x0, x1 + 1):
+                for cy in range(y0, y1 + 1):
+                    grid.setdefault((cx, cy), []).append(i)
+
+        kept = []
+        for i, seg in enumerate(segments):
+            if seg.length >= short:
+                kept.append(seg)
+                continue
+            ok = False
+            for p in (seg.start, seg.end):
+                if near_box(p):
+                    ok = True
+                    break
+                cand = grid.get((int(p[0] // cell), int(p[1] // cell)), ())
+                if any(j != i and dist(p, segments[j].start, segments[j].end) <= tol for j in cand):
+                    ok = True
+                    break
+            if ok:
+                kept.append(seg)
+        for i, seg in enumerate(kept):
+            seg.segment_id = i
+        return kept
+
+    @staticmethod
+    def _drop_contained(segments: List[WireSegment], tol: float = 2.0) -> List[WireSegment]:
+        """Remove Hough duplicates lying inside a longer collinear segment.
+
+        A duplicate that stops mid-wire (typically at a crossing without a
+        junction dot) would otherwise look like a T-joint and merge two nets.
+        """
+        def dist(p, a, b):
+            ax, ay = a
+            bx, by = b
+            dx, dy = bx - ax, by - ay
+            ll = dx * dx + dy * dy
+            if ll == 0:
+                return float(np.hypot(p[0] - ax, p[1] - ay))
+            t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / ll))
+            return float(np.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy))
+
+        cell = 32
+        grid: Dict[Tuple[int, int], List[WireSegment]] = {}
+        kept: List[WireSegment] = []
+        for seg in sorted(segments, key=lambda s: -s.length):
+            gx, gy = int(seg.start[0] // cell), int(seg.start[1] // cell)
+            contained = any(
+                dist(seg.start, k.start, k.end) <= tol and dist(seg.end, k.start, k.end) <= tol
+                for cx in (gx - 1, gx, gx + 1) for cy in (gy - 1, gy, gy + 1)
+                for k in grid.get((cx, cy), ())
+            )
+            if contained:
+                continue
+            kept.append(seg)
+            x0 = int((min(seg.start[0], seg.end[0]) - tol) // cell)
+            x1 = int((max(seg.start[0], seg.end[0]) + tol) // cell)
+            y0 = int((min(seg.start[1], seg.end[1]) - tol) // cell)
+            y1 = int((max(seg.start[1], seg.end[1]) + tol) // cell)
+            for cx in range(x0, x1 + 1):
+                for cy in range(y0, y1 + 1):
+                    grid.setdefault((cx, cy), []).append(seg)
+        kept.sort(key=lambda s: s.segment_id)
+        for i, seg in enumerate(kept):
+            seg.segment_id = i
+        return kept
 
 
 # =============================================================================
@@ -512,9 +702,15 @@ class ProductionPipeline:
         # Stage 1: Detection
         stage_start = time.time()
         try:
-            detections, component_bboxes, detector_available = self._run_detection(image)
+            detections, component_bboxes, backend = self._run_detection(image)
             result.manifest.components = self._group_components(detections)
-            if not detector_available:
+            if backend == "gost_templates":
+                result.warnings.append(
+                    "Детекция УГО: обученных весов нет, применён шаблонный детектор по библиотеке "
+                    "ГОСТ УГО (CPU). Надёжен для чистых схем по ЕСКД; классы и обозначения "
+                    "проверьте в валидаторе"
+                )
+            elif backend != "sahi":
                 result.warnings.append("Детекция УГО недоступна: нет обученных весов или SAHI; классы не определены")
         except Exception as e:
             result.errors.append(f"Detection failed: {e}")
@@ -605,18 +801,26 @@ class ProductionPipeline:
             device=self.config.detection.device,
             slice_size=self.config.slicing.tile_size,
             overlap_ratio=self.config.slicing.overlap_ratio,
+            template_fallback=getattr(self.config.detection, "template_fallback", True),
+            template_min_score=getattr(self.config.detection, "template_min_score", 0.62),
+            template_px_per_mm=getattr(self.config.detection, "template_px_per_mm", None),
         )
         
         detections = detector.detect(image)
-        bboxes = [d["bbox"] for d in detections]
+        # Точки соединения - часть провода: их нельзя вырезать из векторизации.
+        bboxes = [d["bbox"] for d in detections
+                  if d.get("exclude_from_wires", d.get("category") != "junction_dot")]
         
-        return detections, bboxes, detector.backend == "sahi"
+        return detections, bboxes, detector.backend
     
     def _group_components(
         self, detections: List[Dict]
     ) -> List[Component]:
         """Group detections into semantic components."""
         from scipy.spatial import KDTree
+        
+        if any("pins" in d for d in detections):
+            return self._components_with_pins(detections)
         
         components = []
         used = set()
@@ -682,6 +886,61 @@ class ProductionPipeline:
         
         return components
     
+    # Обозначения для УГО без буквенного кода по ГОСТ 2.710-81
+    _UNNAMED_PREFIX = {
+        "ground": "GND", "chassis": "CHS", "junction_dot": "J",
+        "offpage_connector": "OFF", "shield": "SH",
+    }
+
+    def _components_with_pins(self, detections: List[Dict]) -> List[Component]:
+        """Компоненты из детекций, уже содержащих выводы (шаблонный детектор).
+
+        Позиционные обозначения назначаются по ГОСТ 2.710-81 (R, C, VD, K, FU,
+        SA, EL, HL, GB, M, X ...) с нумерацией сверху вниз, слева направо, как
+        принято на схемах. Без OCR это предположение - реальные обозначения
+        со схемы распознаёт OCR и переносит в text_associations."""
+        from avers.dataset.gost_symbols import designator_prefix
+
+        def order_key(det):
+            x0, y0, x1, y1 = det["bbox"]
+            return (round(((y0 + y1) / 2) / 40), (x0 + x1) / 2)
+
+        counters: Dict[str, int] = {}
+        components = []
+        for idx, det in enumerate(sorted(detections, key=order_key), start=1):
+            category = det["category"]
+            prefix = designator_prefix(category) or self._UNNAMED_PREFIX.get(
+                category, category[:2].upper())
+            counters[prefix] = counters.get(prefix, 0) + 1
+            pins = []
+            seen = set()
+            det_pins = det.get("pins", [])
+            if category == "junction_dot" and not det_pins:
+                # Точка соединения (ГОСТ 2.721-74) - явное свидетельство
+                # электрического узла: провода, подходящие к ней, соединяются.
+                x0, y0, x1, y1 = det["bbox"]
+                det_pins = [{"name": "J", "coord": ((x0 + x1) // 2, (y0 + y1) // 2)}]
+            for pin in det_pins:
+                key = (pin["name"], tuple(pin["coord"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                pins.append(Pin(pin_number=str(pin["name"]), coord=tuple(int(v) for v in pin["coord"]),
+                                confidence=float(det.get("confidence", 1.0))))
+            comp = Component(
+                id=f"comp_{idx:03d}",
+                designator=f"{prefix}{counters[prefix]}",
+                type=self._category_to_component_type(category),
+                bbox=tuple(int(v) for v in det["bbox"]),
+                pins=pins,
+                confidence=float(det.get("confidence", 1.0)),
+            )
+            comp.text_associations["gost_class"] = category
+            if "rotation" in det:
+                comp.text_associations["rotation"] = str(det["rotation"])
+            components.append(comp)
+        return components
+
     def _run_ocr(
         self, image: np.ndarray
     ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]], bool]:
@@ -748,20 +1007,35 @@ class ProductionPipeline:
             merge_collinear=self.config.graph_synthesis.merge_collinear_segments,
             gap_image=image,
             max_supported_gap=self.config.graph_synthesis.max_supported_gap,
+            # Hough segment ends at a skeleton corner/T are typically 2-5 px
+            # apart; 2 px left most L-corners of real drawings disconnected.
+            junction_tolerance=self.config.graph_synthesis.junction_tolerance,
         )
         
         # Add segments
         for seg in segments:
             builder.add_wire_segment(seg.start, seg.end, seg.points, seg.confidence)
         
-        # Add pins
+        # Add pins. Stage 3 erased the component bbox plus `pad` pixels, so a
+        # wire attached to a pin on the bbox edge now ends ~pad px outside it:
+        # shift edge pins outward by the same amount before snapping.
+        pad = self.config.vectorization.snap_radius
         pins = []
         for comp in components:
+            x0, y0, x1, y1 = comp.bbox
             for pin in comp.pins:
+                px, py = pin.coord
+                if comp.type not in (ComponentType.JUNCTION_DOT,):
+                    # nearest bbox edge (pins sit on the edge, ±rounding)
+                    edges = [(px - x0, -1, 0), (x1 - px, 1, 0), (py - y0, 0, -1), (y1 - py, 0, 1)]
+                    gap, sx, sy = min(edges, key=lambda e: e[0])
+                    if gap <= 3:
+                        px += sx * pad
+                        py += sy * pad
                 pins.append(PinReference(
                     component_id=comp.id,
                     pin_number=pin.pin_number,
-                    coord=tuple(pin.coord),
+                    coord=(max(0, int(px)), max(0, int(py))),
                 ))
         builder.add_component_pins(pins)
         
@@ -773,13 +1047,18 @@ class ProductionPipeline:
         graph = builder.build_graph()
         nets_data = builder.extract_nets([c.model_dump() for c in components])
         
+        # Junction dots are wire nodes, not netlist members.
+        dot_ids = {c.id for c in components if c.type == ComponentType.JUNCTION_DOT}
         nets = []
         for net_data in nets_data:
+            connections = [c for c in net_data.get("connections", [])
+                           if c["component_id"] not in dot_ids]
+            # A lone unconnected pin (or dot) is not a net.
+            if not net_data.get("wire_segments") and len(connections) <= 1:
+                continue
             nets.append(Net(
                 net_id=net_data["net_id"],
-                connections=[
-                    WireConnection(**c) for c in net_data.get("connections", [])
-                ],
+                connections=[WireConnection(**c) for c in connections],
                 path_points=net_data.get("path_points", []),
                 wire_segments=net_data.get("wire_segments", []),
                 confidence=net_data.get("confidence", 1.0),
@@ -910,17 +1189,8 @@ class ProductionPipeline:
     @staticmethod
     def _category_to_component_type(category: str) -> ComponentType:
         """Map detection category to ComponentType."""
-        mapping = {
-            "connector_body": ComponentType.CONNECTOR,
-            "junction_dot": ComponentType.JUNCTION_DOT,
-            "ground": ComponentType.GROUND,
-            "shield": ComponentType.SHIELD,
-            "offpage_connector": ComponentType.OFFPAGE_CONNECTOR,
-            "diode": ComponentType.DIODE,
-            "relay": ComponentType.RELAY,
-            "resistor": ComponentType.RESISTOR,
-        }
-        return mapping.get(category, ComponentType.UNKNOWN)
+        from avers.core.types import CLASS_TO_COMPONENT_TYPE
+        return CLASS_TO_COMPONENT_TYPE.get(category, ComponentType.UNKNOWN)
 
 
 # =============================================================================

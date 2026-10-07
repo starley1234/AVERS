@@ -1015,6 +1015,63 @@ async def get_detection_classes():
     return DETECTION_CLASSES
 
 
+# ==================== GOST library & demo schematic ====================
+
+DEMO_SCHEMATIC = Path(__file__).resolve().parents[2] / "data" / "demo_bks_schematic.png"
+
+
+def _demo_paths():
+    """Demo PNG + reference netlist; regenerated if missing."""
+    truth = DEMO_SCHEMATIC.with_suffix(".netlist.json")
+    if not DEMO_SCHEMATIC.exists() or not truth.exists():
+        from avers.dataset.demo_schematic import save_demo
+        save_demo(DEMO_SCHEMATIC)
+    return DEMO_SCHEMATIC, truth
+
+
+@router.get("/gost/library")
+async def get_gost_library():
+    """Библиотека ГОСТ УГО: классы, стандарты, буквенные коды, выводы."""
+    from avers.dataset.gost_symbols import library_table
+    return {"symbols": library_table()}
+
+
+@router.get("/gost/library.png")
+async def get_gost_library_sheet():
+    """Таблица всех УГО библиотеки (PNG)."""
+    from fastapi.responses import Response
+    from avers.dataset.gost_symbols import render_library_sheet
+    ok, buf = cv2.imencode(".png", render_library_sheet())
+    return Response(content=buf.tobytes(), media_type="image/png")
+
+
+@router.get("/demo/schematic")
+async def get_demo_schematic():
+    """Демонстрационная схема БКС по ЕСКД (PNG)."""
+    image_path, _ = _demo_paths()
+    return FileResponse(str(image_path), media_type="image/png", filename=image_path.name)
+
+
+@router.get("/demo/netlist")
+async def get_demo_netlist():
+    """Эталонные компоненты и цепи демо-схемы."""
+    _, truth_path = _demo_paths()
+    return json.loads(truth_path.read_text(encoding="utf-8"))
+
+
+@router.get("/demo/evaluate/{file_id}")
+async def evaluate_demo(file_id: str):
+    """Сверить результат обработки загруженной демо-схемы с эталоном."""
+    from avers.dataset.demo_schematic import evaluate
+    manifest = await get_result(file_id)
+    _, truth_path = _demo_paths()
+    truth = json.loads(truth_path.read_text(encoding="utf-8"))
+    ev = evaluate(manifest, truth)
+    ev["missing_nets"] = [list(n) for n in ev["missing_nets"]]
+    ev["extra_nets"] = [list(n) for n in ev["extra_nets"]]
+    return ev
+
+
 # RAG endpoints - now using real VisionRAG
 rag_router = APIRouter(prefix="/api/rag")
 

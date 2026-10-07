@@ -25,6 +25,19 @@ class DetectionConfig(BaseModel):
     device: str = Field(default="cuda", description="Device: 'cuda', 'cpu', 'mps'")
     batch_size: int = Field(default=4, description="Batch size for inference")
     img_size: int = Field(default=640, description="Model input size")
+    template_fallback: bool = Field(
+        default=True,
+        description="Without trained weights, detect GOST УГО by template matching "
+                    "against avers.dataset.gost_symbols (CPU, no ML)",
+    )
+    template_min_score: float = Field(
+        default=0.62, ge=0.0, le=1.0,
+        description="Minimum combined score of the GOST template detector",
+    )
+    template_px_per_mm: Optional[float] = Field(
+        default=None,
+        description="Drawing scale in px/mm for the template detector (None = auto-estimate)",
+    )
 
 
 class OCRConfig(BaseModel):
@@ -93,6 +106,11 @@ class GraphSynthesisConfig(BaseModel):
         default=60,
         ge=0,
         description="Max wire gap joined only when ink is continuous (0 disables this)"
+    )
+    junction_tolerance: float = Field(
+        default=4.0,
+        ge=0.0,
+        description="Max distance (px) between wire endpoints / endpoint and wire to join them",
     )
 
 

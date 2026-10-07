@@ -18,16 +18,11 @@ logger = get_logger("avers.detection")
 
 
 # Detection class mapping (ГОСТ УГО)
+from avers.core.types import DETECTION_CLASSES, CLASS_TO_COMPONENT_TYPE
+
 DETECTION_CLASS_MAP = {
-    0: ("connector_body", ComponentType.CONNECTOR),
-    1: ("pin", ComponentType.UNKNOWN),
-    2: ("junction_dot", ComponentType.JUNCTION_DOT),
-    3: ("ground", ComponentType.GROUND),
-    4: ("shield", ComponentType.SHIELD),
-    5: ("offpage_connector", ComponentType.OFFPAGE_CONNECTOR),
-    6: ("diode", ComponentType.DIODE),
-    7: ("relay", ComponentType.RELAY),
-    8: ("resistor", ComponentType.RESISTOR),
+    cid: (name, CLASS_TO_COMPONENT_TYPE.get(name, ComponentType.UNKNOWN))
+    for cid, name in DETECTION_CLASSES.items()
 }
 
 CLASS_NAMES = {k: v[0] for k, v in DETECTION_CLASS_MAP.items()}

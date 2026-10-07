@@ -26,6 +26,11 @@ detection:
   device: cuda                 # 'cuda', 'cpu', 'mps'
   batch_size: 4
   img_size: 640
+  # Без обученных весов: CPU-детектор по шаблонам библиотеки ГОСТ УГО
+  # (avers/dataset/gost_symbols.py). false = старое поведение (компоненты не определяются).
+  template_fallback: true
+  template_min_score: 0.62
+  template_px_per_mm: null      # масштаб чертежа px/мм; null = оценить автоматически
 
 # Stage 3: OCR (PaddleOCR)
 ocr:
@@ -56,6 +61,7 @@ graph_synthesis:
   merge_collinear_segments: true
   merge_tolerance: 5.0         # Tolerance for collinear merge
   max_supported_gap: 60       # Reconnect only continuous-ink gaps <= 60 px; 0 disables
+  junction_tolerance: 4.0     # Max px between wire ends (corners/T-joins) to join them
 
 # Stage 6: VLM Arbitration
 vlm_arbitrator:

@@ -192,9 +192,26 @@ class TestProductionPipeline:
 
         result = ProductionPipeline().run(image, "avers-smoke.png")
 
+        # The GOST template fallback is active, but a square crossed by a wire
+        # is not a standard УГО and must not be "recognised" as one.
+        assert result.manifest.components == []
+        assert any("шаблонный детектор" in warning for warning in result.warnings)
+        assert result.manifest.processing_warnings == result.warnings
+
+    def test_no_detector_warning_when_template_fallback_disabled(self):
+        """With the template fallback off, the old 'unavailable' path holds."""
+        import cv2
+        from avers.config import AVERSConfig
+
+        image = np.full((128, 128, 3), 255, dtype=np.uint8)
+        cv2.line(image, (8, 64), (120, 64), (0, 0, 0), 2)
+        config = AVERSConfig()
+        config.detection.template_fallback = False
+
+        result = ProductionPipeline(config).run(image, "avers-smoke.png")
+
         assert result.manifest.components == []
         assert any("Детекция УГО недоступна" in warning for warning in result.warnings)
-        assert result.manifest.processing_warnings == result.warnings
 
     def test_component_grouping(self):
         """Test component grouping logic."""

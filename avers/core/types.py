@@ -16,6 +16,25 @@ class ComponentType(str, Enum):
     SHIELD = "shield"
     OFFPAGE_CONNECTOR = "offpage_connector"
     JUNCTION_DOT = "junction_dot"
+    # v0.4: реальные элементы библиотеки ГОСТ УГО (avers/dataset/gost_symbols.py)
+    CAPACITOR = "capacitor"
+    FUSE = "fuse"
+    SWITCH = "switch"
+    PUSHBUTTON = "pushbutton"
+    LAMP = "lamp"
+    LED = "led"
+    ZENER = "zener"
+    INDUCTOR = "inductor"
+    TRANSFORMER = "transformer"
+    TRANSISTOR = "transistor"
+    BATTERY = "battery"
+    MOTOR = "motor"
+    GENERATOR = "generator"
+    POTENTIOMETER = "potentiometer"
+    PLUG = "plug"
+    SOCKET = "socket"
+    TERMINAL = "terminal"
+    CHASSIS = "chassis"
     UNKNOWN = "unknown"
 
 
@@ -300,7 +319,9 @@ class AVERSManifest(BaseModel):
         tree.write(str(path), xml_declaration=True, encoding="UTF-8", pretty_print=True)
 
 
-# Detection class names (ГОСТ УГО)
+# Detection class names (ГОСТ УГО). Единственный источник истины -
+# avers/dataset/gost_symbols.py::GOST_SYMBOLS; здесь - его зеркало, чтобы
+# core.types не импортировал cv2/numpy-зависимую библиотеку отрисовки.
 DETECTION_CLASSES = {
     0: "connector_body",
     1: "pin",
@@ -311,6 +332,28 @@ DETECTION_CLASSES = {
     6: "diode",
     7: "relay",
     8: "resistor",
+    9: "capacitor",
+    10: "fuse",
+    11: "switch_no",
+    12: "switch_nc",
+    13: "switch_changeover",
+    14: "pushbutton_no",
+    15: "lamp",
+    16: "led",
+    17: "zener",
+    18: "capacitor_polar",
+    19: "inductor",
+    20: "transformer",
+    21: "transistor_npn",
+    22: "transistor_pnp",
+    23: "battery",
+    24: "motor",
+    25: "generator",
+    26: "potentiometer",
+    27: "plug_contact",
+    28: "socket_contact",
+    29: "terminal",
+    30: "chassis",
 }
 
 CLASS_TO_COMPONENT_TYPE = {
@@ -323,4 +366,26 @@ CLASS_TO_COMPONENT_TYPE = {
     "diode": ComponentType.DIODE,
     "relay": ComponentType.RELAY,
     "resistor": ComponentType.RESISTOR,
+    "capacitor": ComponentType.CAPACITOR,
+    "fuse": ComponentType.FUSE,
+    "switch_no": ComponentType.SWITCH,
+    "switch_nc": ComponentType.SWITCH,
+    "switch_changeover": ComponentType.SWITCH,
+    "pushbutton_no": ComponentType.PUSHBUTTON,
+    "lamp": ComponentType.LAMP,
+    "led": ComponentType.LED,
+    "zener": ComponentType.ZENER,
+    "capacitor_polar": ComponentType.CAPACITOR,
+    "inductor": ComponentType.INDUCTOR,
+    "transformer": ComponentType.TRANSFORMER,
+    "transistor_npn": ComponentType.TRANSISTOR,
+    "transistor_pnp": ComponentType.TRANSISTOR,
+    "battery": ComponentType.BATTERY,
+    "motor": ComponentType.MOTOR,
+    "generator": ComponentType.GENERATOR,
+    "potentiometer": ComponentType.POTENTIOMETER,
+    "plug_contact": ComponentType.PLUG,
+    "socket_contact": ComponentType.SOCKET,
+    "terminal": ComponentType.TERMINAL,
+    "chassis": ComponentType.CHASSIS,
 }

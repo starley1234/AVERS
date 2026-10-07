@@ -580,6 +580,9 @@ body {
         <div class="upload-hint">TIF, PNG, JPG, <b>PDF</b> до 50MB<br>А2х6 до 15000×4000px, PDF многостраничный</div>
       </div>
       <input type="file" id="fileInput" hidden accept=".tif,.tiff,.png,.jpg,.jpeg,.pdf,.PDF" onchange="handleFile(event)">
+      <button class="btn btn-sm" style="width:100%; margin-top:8px" onclick="loadDemoSchematic()"
+              title="Демонстрационная схема БКС по ЕСКД с эталонным netlist">▶ Демо-схема БКС (ГОСТ)</button>
+      <div class="upload-hint" id="demoScore" style="display:none; margin-top:6px"></div>
 
       <div class="section" id="pdfPagesSection" style="display:none">
         <div class="section-label">Страницы PDF: <span id="pdfPageCount">0</span></div>
@@ -899,6 +902,7 @@ const NET_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#a855f7', '#f59e0b'];
 function handleFile(e) {
   const file = e.target.files[0];
   if (!file) return;
+  state.demo = false;
   uploadFile(file);
 }
 
@@ -909,7 +913,7 @@ uploadZone.addEventListener('drop', (e)=>{
   e.preventDefault();
   uploadZone.classList.remove('dragover');
   const file = e.dataTransfer.files[0];
-  if (file) uploadFile(file);
+  if (file) { state.demo = false; uploadFile(file); }
 });
 
 async function uploadFile(file) {
@@ -974,6 +978,32 @@ async function uploadFile(file) {
   } catch(err) {
     document.getElementById('statusText').textContent = 'Ошибка загрузки: '+err;
   }
+}
+
+async function loadDemoSchematic() {
+  try {
+    const res = await fetch(`${API}/api/demo/schematic`);
+    if (!res.ok) throw new Error(res.status);
+    const blob = await res.blob();
+    state.demo = true;
+    document.getElementById('demoScore').style.display = 'none';
+    await uploadFile(new File([blob], 'demo_bks_schematic.png', {type: 'image/png'}));
+  } catch (err) {
+    document.getElementById('statusText').textContent = 'Не удалось загрузить демо-схему: ' + err;
+  }
+}
+
+async function showDemoScore() {
+  if (!state.demo || !state.fileId) return;
+  try {
+    const res = await fetch(`${API}/api/demo/evaluate/${state.fileId}`);
+    if (!res.ok) return;
+    const ev = await res.json();
+    const el = document.getElementById('demoScore');
+    el.innerHTML = `Сверка с эталоном: компоненты <b>${ev.components_found}/${ev.components_expected}</b>, ` +
+      `цепи <b>${ev.nets_matched}/${ev.nets_expected}</b> (точность ${(ev.net_precision*100).toFixed(0)}%)`;
+    el.style.display = 'block';
+  } catch (e) { console.warn('demo evaluate failed', e); }
 }
 
 function switchPDFPage(pageIdx) {
@@ -1069,6 +1099,7 @@ async function pollStatus() {
           : `Готово · ${Object.keys(job.stage_timings).length} стадий`;
         document.getElementById('statusPerf').textContent = Object.entries(job.stage_timings).map(([k,v])=>`${k}:${(v*1000).toFixed(0)}ms`).join(' · ');
         loadResult();
+        showDemoScore();
       } else {
         document.getElementById('statusText').textContent = 'Ошибка: '+(job.errors.join(', ')||'unknown');
       }
@@ -1449,7 +1480,7 @@ function switchDatasetTab(name) {
 async function generateSynthetic() {
   const log = document.getElementById('synthLog');
   log.textContent = 'Генерация синтетического датасета ГОСТ УГО...\n';
-  log.textContent += 'Классы: connector_body, pin, junction_dot, ground, diode, resistor\n';
+  log.textContent += 'Классы: ' + (await fetchGostLibrary()).map(s => s.class_name).join(', ') + '\n';
   log.textContent += 'Генерация 100 изображений 1024x1024 с аугментациями...\n';
   
   // Simulate
@@ -1460,8 +1491,17 @@ async function generateSynthetic() {
   log.textContent += '\n✓ Датасет сохранен в /tmp/avers_dataset/\n✓ dataset.yaml создан\n✓ Готов к обучению RT-DETR/YOLO';
 }
 
-function previewSynthetic() {
-  document.getElementById('synthLog').textContent = 'Превью синтетических ГОСТ символов:\n\n◈ connector_body: прямоугольник с контактами (ГОСТ 2.755)\n● junction_dot: точка соединения 6px\n⏚ ground: земля / корпус\n▷ diode: диод с чертой\n∿ resistor: резистор зигзаг\n... (реальные изображения генерируются на бэкенде)';
+async function fetchGostLibrary() {
+  const res = await fetch(`${API}/api/gost/library`);
+  return res.ok ? (await res.json()).symbols : [];
+}
+
+async function previewSynthetic() {
+  const log = document.getElementById('synthLog');
+  const lib = await fetchGostLibrary();
+  log.textContent = `Библиотека ГОСТ УГО: ${lib.length} классов\n\n` + lib.map(s =>
+    `${String(s.class_id).padStart(2)} ${s.designator ? s.designator.padEnd(3) : '   '} ${s.description} — ${s.gost}`
+  ).join('\n') + `\n\nТаблица символов: /api/gost/library.png`;
 }
 
 function startAnnotateMode() {
@@ -1470,8 +1510,10 @@ function startAnnotateMode() {
   document.getElementById('statusText').textContent = 'Режим разметки: выберите класс и рисуйте боксы (1-9, Del, S)';
 }
 
-function exportYOLO() {
-  document.getElementById('synthLog').textContent = 'Экспорт в YOLO формат:\n/tmp/avers_dataset/images/\n/tmp/avers_dataset/labels/\n/tmp/avers_dataset/dataset.yaml\n\nclasses: 9\n- connector_body\n- pin\n- junction_dot\n- ground\n- shield\n- offpage_connector\n- diode\n- relay\n- resistor';
+async function exportYOLO() {
+  const lib = await fetchGostLibrary();
+  document.getElementById('synthLog').textContent = 'Экспорт в YOLO формат:\n/tmp/avers_dataset/images/\n/tmp/avers_dataset/labels/\n/tmp/avers_dataset/dataset.yaml\n\n' +
+    `classes: ${lib.length}\n` + lib.map(s => `- ${s.class_name}`).join('\n');
 }
 
 function startTraining() {

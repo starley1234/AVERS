@@ -236,13 +236,32 @@ class GraphBuilder:
             return 0
 
         merged = 0
+        self._pin_coords = {tuple(pin.coord) for pin in self.pins}
+        radius = min(self.merge_tolerance, self.junction_tolerance)
         # Restart after each merge so a segment is never consumed twice.
+        # Candidate pairs come from a k-d tree over endpoints (only segments
+        # with endpoints closer than ``radius`` can merge), which keeps this
+        # near-linear on noisy scans with thousands of Hough segments. The
+        # first pair in (first_id, second_id) order is chosen, exactly as the
+        # previous exhaustive O(n^2) scan did.
         while True:
             segment_ids = sorted(self.wire_segments)
+            owners = []
+            coords = []
+            for sid in segment_ids:
+                seg = self.wire_segments[sid]
+                for point in (seg.start, seg.end):
+                    owners.append(sid)
+                    coords.append(point)
+            candidates = set()
+            if len(coords) >= 2:
+                tree = KDTree(np.asarray(coords, dtype=float))
+                for i, j in tree.query_pairs(radius + 1e-9):
+                    a, b = owners[i], owners[j]
+                    if a != b:
+                        candidates.add((min(a, b), max(a, b)))
             pair = next(
-                ((first, second)
-                 for i, first in enumerate(segment_ids)
-                 for second in segment_ids[i + 1:]
+                ((first, second) for first, second in sorted(candidates)
                  if self._are_collinear_and_connected(
                      self.wire_segments[first], self.wire_segments[second],
                  )),
@@ -279,11 +298,14 @@ class GraphBuilder:
                     seg2.start[0] == seg2.end[0])
         if not (horizontal or vertical):
             return False
+        pin_coords = getattr(self, "_pin_coords", None)
+        if pin_coords is None:
+            pin_coords = {tuple(pin.coord) for pin in self.pins}
         for a in (seg1.start, seg1.end):
             for b in (seg2.start, seg2.end):
                 if hypot(a[0] - b[0], a[1] - b[1]) <= min(
                     self.merge_tolerance, self.junction_tolerance,
-                ) and not any(pin.coord == a or pin.coord == b for pin in self.pins):
+                ) and tuple(a) not in pin_coords and tuple(b) not in pin_coords:
                     return True
         return False
 
@@ -390,14 +412,28 @@ class GraphBuilder:
         segments = sorted(self.wire_segments.items())
         endpoints = sorted({point for _, seg in segments for point in (seg.start, seg.end)})
         # Canonicalize close endpoints, without modifying the input segments.
+        # Same result as "first earlier representative within tolerance", but
+        # looked up in a uniform grid instead of scanning every representative.
+        tol = self.junction_tolerance
+        cell = max(1.0, float(tol))
         canonical = {}
-        representatives = []
+        rep_grid: Dict[Tuple[int, int], List[Tuple[int, Tuple[int, int]]]] = {}
+        rep_count = 0
         for point in endpoints:
-            match = next((p for p in representatives
-                          if hypot(point[0] - p[0], point[1] - p[1]) <= self.junction_tolerance), None)
-            if match is None:
+            gx, gy = int(point[0] // cell), int(point[1] // cell)
+            best = None
+            for cx in (gx - 1, gx, gx + 1):
+                for cy in (gy - 1, gy, gy + 1):
+                    for order, p in rep_grid.get((cx, cy), ()):
+                        if (hypot(point[0] - p[0], point[1] - p[1]) <= tol
+                                and (best is None or order < best[0])):
+                            best = (order, p)
+            if best is None:
                 match = point
-                representatives.append(point)
+                rep_grid.setdefault((gx, gy), []).append((rep_count, point))
+                rep_count += 1
+            else:
+                match = best[1]
             canonical[point] = match
 
         legs = {}
@@ -411,10 +447,25 @@ class GraphBuilder:
 
         splits = {key: [(0.0, a), (1.0, b)] for key, (a, b) in legs.items()}
         joins = set()
+        # Spatial grid over leg bounding boxes (expanded by the tolerance), so
+        # each endpoint is projected only onto nearby legs.
+        leg_cell = 32
+        leg_grid: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
+        for key, (a, b) in legs.items():
+            x0 = int((min(a[0], b[0]) - tol) // leg_cell)
+            x1 = int((max(a[0], b[0]) + tol) // leg_cell)
+            y0 = int((min(a[1], b[1]) - tol) // leg_cell)
+            y1 = int((max(a[1], b[1]) + tol) // leg_cell)
+            for gx in range(x0, x1 + 1):
+                for gy in range(y0, y1 + 1):
+                    leg_grid.setdefault((gx, gy), []).append(key)
         for seg_id, seg in segments:
             for raw in (seg.start, seg.end):
                 point = canonical[raw]
-                for (other_id, index), (a, b) in legs.items():
+                nearby = sorted(set(leg_grid.get(
+                    (int(point[0] // leg_cell), int(point[1] // leg_cell)), ())))
+                for other_id, index in nearby:
+                    a, b = legs[(other_id, index)]
                     if other_id == seg_id:
                         continue
                     t, target, distance = self._project(point, a, b)
