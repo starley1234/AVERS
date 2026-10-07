@@ -42,9 +42,9 @@
 
 **CLI (v0.2 + v0.3):**
 ```bash
-python -m avers web --port 8000  # validator auto-collects feedback; http://localhost:8000/dashboard
-curl http://localhost:8000/api/active-learning/stats
-curl -X POST http://localhost:8000/api/active-learning/retrain?model_type=rtdetr-l&epochs=20
+python -m avers web --port 8030  # validator auto-collects feedback; http://localhost:8030/dashboard
+curl http://localhost:8030/api/active-learning/stats
+curl -X POST http://localhost:8030/api/active-learning/retrain?model_type=rtdetr-l&epochs=20
 
 # v0.3 additions
 python -m avers active-learning stats
@@ -132,10 +132,10 @@ python -m avers dataset real-schematics list --tier tier1_simple_car   # real RU
 
 ## Как помочь?
 
-- Разметьте схемы через http://localhost:8000/annotator
+- Разметьте схемы через http://localhost:8030/annotator
 - Исправляйте ошибки в валидаторе - они улучшают RAG и active learning
 - Запустите `python quickstart.py` для проверки
-- Соберите feedback: `curl http://localhost:8000/api/active-learning/stats`
+- Соберите feedback: `curl http://localhost:8030/api/active-learning/stats`
 
 ---
 
@@ -147,9 +147,9 @@ pip install -r requirements.txt
 pip install fastapi uvicorn python-multipart
 
 # Web UI
-python -m avers web --port 8000
-# http://localhost:8000
-# http://localhost:8000/annotator
+python -m avers web --port 8030
+# http://localhost:8030
+# http://localhost:8030/annotator
 
 # Датасет
 python -m avers dataset generate --output /tmp/dataset --num-train 100 --num-val 20

@@ -882,10 +882,12 @@ def visualize_graph_3d(
             net_id = net.get("net_id", "")
             connections = net.get("connections", [])
             path_points = net.get("path_points", [])
+            wire_segments = net.get("wire_segments", [])
         else:
             net_id = getattr(net, "net_id", "")
             connections = getattr(net, "connections", [])
             path_points = getattr(net, "path_points", [])
+            wire_segments = getattr(net, "wire_segments", [])
 
         pin_ids = []
         for conn in connections:
@@ -899,7 +901,38 @@ def visualize_graph_3d(
             if pin_id in node_map:
                 pin_ids.append(pin_id)
 
-        if path_points and len(path_points) > 1:
+        if wire_segments:
+            for index, (start, end) in enumerate(wire_segments):
+                wire_node_ids = []
+                for x, y in (start, end):
+                    node_id = f"{net_id}_wire_{x}_{y}"
+                    if node_id not in node_map:
+                        node = {
+                            "id": node_id, "label": "", "type": "wire", "net_id": net_id,
+                            "x": float(x), "y": float(y), "z": 10.0,
+                            "color": "rgb(100, 100, 100)", "color_hex": "#646464",
+                            "size": 1, "shape": "sphere", "opacity": 0.6,
+                        }
+                        nodes.append(node)
+                        node_map[node_id] = node
+                    wire_node_ids.append(node_id)
+                edges.append({
+                    "id": f"edge_{net_id}_wire_{index}",
+                    "from": wire_node_ids[0], "to": wire_node_ids[1],
+                    "type": "wire", "net_id": net_id,
+                    "color": "rgb(239, 68, 68)", "width": 2,
+                })
+            for pin_id in pin_ids:
+                pin_node = node_map[pin_id]
+                wire_node_id = f"{net_id}_wire_{int(pin_node['x'])}_{int(pin_node['y'])}"
+                if wire_node_id in node_map:
+                    edges.append({
+                        "id": f"edge_{pin_id}_{wire_node_id}",
+                        "from": pin_id, "to": wire_node_id,
+                        "type": "net", "net_id": net_id,
+                        "color": "rgb(239, 68, 68)", "width": 3,
+                    })
+        elif path_points and len(path_points) > 1:
             prev_node_id = None
             for i, (x, y) in enumerate(path_points):
                 z = 10 + math.sin(i * 0.5) * 10 + random.uniform(-2, 2)

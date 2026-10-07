@@ -89,6 +89,11 @@ class GraphSynthesisConfig(BaseModel):
         default=5.0,
         description="Tolerance for collinear merge (pixels)"
     )
+    max_supported_gap: int = Field(
+        default=60,
+        ge=0,
+        description="Max wire gap joined only when ink is continuous (0 disables this)"
+    )
 
 
 class VLMArbitratorConfig(BaseModel):
@@ -164,7 +169,7 @@ class TrainingConfig(BaseModel):
 class WebConfig(BaseModel):
     """Web UI configuration."""
     host: str = Field(default="0.0.0.0")
-    port: int = Field(default=8000)
+    port: int = Field(default=8030)
     reload: bool = Field(default=False)
     workers: int = Field(default=1)
     upload_dir: str = Field(default="/tmp/avers_uploads")

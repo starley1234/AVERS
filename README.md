@@ -109,16 +109,28 @@ result = pipeline.run(image, "input.tif", dpi=300)
 ### Web UI валидатор (NEW)
 
 ```bash
-# Запуск
-python -m avers web --port 8000 --host 0.0.0.0
+# Запуск (порт по умолчанию — 8030)
+python -m avers web
 
 # Откройте в браузере
-# http://localhost:8000          - Валидатор
-# http://localhost:8000/annotator - Аннотатор ГОСТ УГО
-# http://localhost:8000/docs      - API docs
+# http://localhost:8030          - Валидатор
+# http://localhost:8030/annotator - Аннотатор ГОСТ УГО
+# http://localhost:8030/docs      - API docs
 ```
 
+В Windows из корня проекта можно запустить `run_web.cmd` — он использует
+локальное окружение `venv\Scripts\python.exe` и порт 8030.
+
 **Фичи Web UI:**
+
+Без обученных весов детектора (`detection.model_path`) и OCR-бэкенда интерфейс
+показывает предупреждение: он не присваивает контурам вымышленные классы УГО
+или маркировки. Ограничения также сохраняются в `processing_warnings` при
+экспорте JSON/XML. Для распознавания реальных схем нужны обученная модель и
+установленный OCR (см. раздел «Установка»). Web UI читает `config.yaml`
+(или путь из `AVERS_CONFIG`); укажите там `detection.model_path` к весам
+модели, обученной на соответствующих классах УГО.
+
 - Drag & drop загрузка TIF/PNG до 50MB
 - Визуализация всех стадий (детекция, OCR, векторизация, граф)
 - Zoom/pan canvas с overlay слоями
@@ -126,6 +138,12 @@ python -m avers web --port 8000 --host 0.0.0.0
 - Экспорт JSON/XML
 - Vision RAG поиск
 - Минималистичный дизайн (Inter + JetBrains Mono, темная тема)
+
+Для проверки геометрии проводов можно загрузить `data/demo_connections.png`
+([ожидаемая топология](data/demo_connections.md)): верхняя Т-образная ветка
+и нижняя Г-образная ветка должны образовать две отдельные цепи. Это тест **проводов**, не автоматического распознавания УГО:
+без обученной модели контакты компонентов не определяются. Измерения на
+реальных сканах и известные ограничения: [docs/REAL_SCAN_SMOKE_TEST.md](docs/REAL_SCAN_SMOKE_TEST.md).
 
 ### Synthetic Dataset ГОСТ УГО + Public Datasets (NEW)
 
@@ -180,8 +198,8 @@ datasets = loader.list_datasets(gost_compatible_only=True)  # Masala-CHAI 4300, 
 
 ```bash
 # Запустите Web UI и откройте /annotator
-python -m avers web --port 8000
-# http://localhost:8000/annotator
+python -m avers web --port 8030
+# http://localhost:8030/annotator
 
 # Горячие клавиши:
 # 1-9 - выбор класса
@@ -287,8 +305,8 @@ python -m avers active-learning registry promote v000002
 python -m avers active-learning registry ab-test v000002 --ratio 0.2
 
 # Web UI: валидатор автоматически собирает feedback, дашборд мониторинга
-AVERS_AL_SCHEDULER_ENABLED=true python -m avers web --port 8000
-# http://localhost:8000/dashboard
+AVERS_AL_SCHEDULER_ENABLED=true python -m avers web --port 8030
+# http://localhost:8030/dashboard
 ```
 
 Каталог реальных (не синтетических) советских/российских схем для обучения
@@ -397,7 +415,7 @@ dataset:  # NEW
 
 web:  # NEW
   host: 0.0.0.0
-  port: 8000
+  port: 8030
 
 active_learning:  # NEW v0.3
   enabled: true

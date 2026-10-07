@@ -319,7 +319,10 @@ body {
   pointer-events: none;
 }
 .canvas-overlay svg {
-  width: 100%; height: 100%;
+  position: absolute;
+  top: 0; left: 0;
+  transform-origin: 0 0;
+  overflow: visible;
 }
 
 /* Layers toggle */
@@ -406,6 +409,18 @@ body {
 }
 .issue-desc { font-size: 12px; line-height: 1.4; margin-bottom: 8px; }
 .issue-actions { display: flex; gap: 6px; }
+
+.inference-warning {
+  display: none;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid #a16207;
+  border-radius: 6px;
+  color: #facc15;
+  background: rgba(161, 98, 7, 0.15);
+  font-size: 11px;
+  line-height: 1.4;
+}
 
 /* Status bar */
 .statusbar {
@@ -585,6 +600,7 @@ body {
 
       <div class="section">
         <div class="section-label">Пайплайн</div>
+        <div class="inference-warning" id="inferenceWarning" role="status"></div>
         <div class="stages" id="stages">
           <div class="stage" data-stage="detection"><div class="stage-icon">◈</div><div class="stage-info"><div class="stage-name">Детекция УГО</div><div class="stage-desc">SAHI + RT-DETR / YOLO</div></div><div class="stage-time" id="time-detection">—</div></div>
           <div class="stage" data-stage="ocr"><div class="stage-icon">T</div><div class="stage-info"><div class="stage-name">OCR текста</div><div class="stage-desc">PaddleOCR + ГОСТ</div></div><div class="stage-time" id="time-ocr">—</div></div>
@@ -877,6 +893,7 @@ let state = {
 };
 
 const API = '';
+const NET_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#a855f7', '#f59e0b'];
 
 // Upload
 function handleFile(e) {
@@ -903,6 +920,10 @@ async function uploadFile(file) {
   document.getElementById('fileName').textContent = file.name;
   document.getElementById('fileSize').textContent = (file.size/1024/1024).toFixed(2)+' MB';
   document.getElementById('statusText').textContent = 'Загрузка...';
+  document.getElementById('inferenceWarning').style.display = 'none';
+  state.manifest = null;
+  state.visMode = 'graph';
+  document.getElementById('overlaySvg').innerHTML = '';
   
   const isPDF = file.name.toLowerCase().endsWith('.pdf');
   
@@ -989,7 +1010,8 @@ async function runPipeline() {
   document.getElementById('runBtn').disabled = true;
   document.getElementById('runBtn').textContent = '⏳ Обработка...';
   document.getElementById('statusText').textContent = 'Запуск пайплайна...';
-  
+  document.getElementById('inferenceWarning').style.display = 'none';
+
   // Reset stages
   document.querySelectorAll('.stage').forEach(s=>{ s.classList.remove('active','done'); });
   
@@ -1027,7 +1049,7 @@ async function pollStatus() {
       });
     }
     Object.entries(job.stage_timings).forEach(([k,v])=>{
-      const el = document.getElementById(`time-${k}`);
+      const el = document.getElementById(`time-${stageMap[k]||k}`);
       if (el) { el.textContent = (v*1000).toFixed(0)+'ms'; el.parentElement.classList.add('done'); el.parentElement.classList.remove('active'); }
     });
     
@@ -1038,7 +1060,13 @@ async function pollStatus() {
       document.getElementById('runBtn').textContent = '▶ Запустить обработку';
       
       if (job.status === 'completed') {
-        document.getElementById('statusText').textContent = `Готово · ${Object.keys(job.stage_timings).length} стадий`;
+        const warnings = job.warnings || [];
+        const warningBox = document.getElementById('inferenceWarning');
+        warningBox.textContent = warnings.length ? '⚠ ' + warnings.join(' · ') : '';
+        warningBox.style.display = warnings.length ? 'block' : 'none';
+        document.getElementById('statusText').textContent = warnings.length
+          ? '⚠ Обработка завершена с ограничениями'
+          : `Готово · ${Object.keys(job.stage_timings).length} стадий`;
         document.getElementById('statusPerf').textContent = Object.entries(job.stage_timings).map(([k,v])=>`${k}:${(v*1000).toFixed(0)}ms`).join(' · ');
         loadResult();
       } else {
@@ -1099,12 +1127,29 @@ function renderComponents(comps) {
 function renderNets(nets) {
   const el = document.getElementById('netList');
   if (!nets.length) { el.innerHTML = '<div class="empty"><div class="empty-text">Нет цепей</div></div>'; return; }
-  el.innerHTML = nets.map(n=>`
-    <div class="list-item">
-      <div class="item-top"><span class="item-title">${n.net_id}</span><span class="item-badge">${n.connections?.length||0} conn</span></div>
-      <div class="item-meta">${n.wire_type||''} ${n.wire_color||''} · точек: ${n.path_points?.length||0} · ${(n.confidence*100).toFixed(0)}%</div>
-    </div>
-  `).join('');
+  el.innerHTML = nets.map((n,netIndex)=>{
+    const color = NET_COLORS[netIndex % NET_COLORS.length];
+    const segments = (n.wire_segments||[]).map(seg=>Array.isArray(seg) ? seg : [seg.start, seg.end]);
+    const degrees = new Map();
+    segments.forEach(([start,end])=>{
+      for (const point of [start,end]) {
+        const key = point.join(', ');
+        degrees.set(key, (degrees.get(key)||0)+1);
+      }
+    });
+    const endpoints = segments.length
+      ? [...degrees].filter(([,degree])=>degree===1).map(([point])=>`(${point})`)
+      : (n.path_points?.length > 1 ? [n.path_points[0], n.path_points.at(-1)].map(pt=>`(${pt.join(', ')})`) : []);
+    const contacts = n.connections?.length
+      ? n.connections.map(c=>`${c.component_id}:${c.pin}`).join(', ')
+      : 'не определены (нет модели УГО)';
+    return `
+      <div class="list-item" style="border-left:3px solid ${color}">
+        <div class="item-top"><span class="item-title">${n.net_id}</span><span class="item-badge">${segments.length||n.path_points?.length||0} сегм.</span></div>
+        <div class="item-meta">Концы: ${endpoints.length ? endpoints.join(' · ') : '—'}<br>Контакты: ${contacts}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderIssues(issues) {
@@ -1183,8 +1228,8 @@ canvas.addEventListener('wheel', (e)=>{
 
 function zoom(factor, cx, cy) {
   const rect = canvas.getBoundingClientRect();
-  const mx = (cx!==undefined ? cx : rect.width/2);
-  const my = (cy!==undefined ? cy : rect.height/2);
+  const mx = (cx!==undefined ? cx - rect.left : rect.width/2);
+  const my = (cy!==undefined ? cy - rect.top : rect.height/2);
   const wx = (mx - state.pan.x)/state.zoom;
   const wy = (my - state.pan.y)/state.zoom;
   state.zoom *= factor;
@@ -1194,7 +1239,7 @@ function zoom(factor, cx, cy) {
   updateTransform();
 }
 
-function setZoom(z) { state.zoom = z; fitView(); }
+function setZoom(z) { zoom(z / state.zoom); }
 
 function fitView() {
   if (!canvasImg.src) return;
@@ -1235,7 +1280,9 @@ function setVis(mode) {
     document.getElementById('overlaySvg').innerHTML = '';
     document.getElementById('statusText').textContent = `Diff режим: ${nextMode} — кликните еще раз для следующего`;
   } else {
-    canvasImg.src = `${API}/api/visualization/${state.fileId}/${mode}`;
+    canvasImg.src = mode === 'graph'
+      ? `${API}/api/image/${state.fileId}`
+      : `${API}/api/visualization/${state.fileId}/${mode}`;
     if (mode === 'graph') renderOverlay();
     else document.getElementById('overlaySvg').innerHTML = '';
   }
@@ -1247,27 +1294,47 @@ function toggleLayer(cb) {
 }
 
 function renderOverlay() {
-  if (!state.manifest) return;
   const svg = document.getElementById('overlaySvg');
-  const iw = canvasImg.naturalWidth || 1000;
-  const ih = canvasImg.naturalHeight || 600;
+  if (!state.manifest || state.visMode !== 'graph') { svg.innerHTML = ''; return; }
+  const iw = state.manifest.schema_metadata.width;
+  const ih = state.manifest.schema_metadata.height;
   svg.setAttribute('viewBox', `0 0 ${iw} ${ih}`);
   svg.setAttribute('width', iw);
   svg.setAttribute('height', ih);
+  svg.style.width = `${iw}px`;
+  svg.style.height = `${ih}px`;
   svg.innerHTML = '';
   
   const ns = 'http://www.w3.org/2000/svg';
   
   if (state.layers.wires) {
-    state.manifest.nets?.forEach(net=>{
-      const pts = net.path_points;
-      if (!pts || pts.length<2) return;
-      for (let i=0;i<pts.length-1;i++) {
+    state.manifest.nets?.forEach((net,netIndex)=>{
+      const color = NET_COLORS[netIndex % NET_COLORS.length];
+      const segments = net.wire_segments?.length
+        ? net.wire_segments.map(seg=>Array.isArray(seg) ? seg : [seg.start, seg.end])
+        : (net.path_points||[]).slice(1).map((pt,i)=>[net.path_points[i], pt]);
+      const degrees = new Map();
+      segments.forEach(([start,end])=>{
+        if (!start || !end) return;
         const line = document.createElementNS(ns,'line');
-        line.setAttribute('x1', pts[i][0]); line.setAttribute('y1', pts[i][1]);
-        line.setAttribute('x2', pts[i+1][0]); line.setAttribute('y2', pts[i+1][1]);
-        line.setAttribute('stroke', '#ef4444'); line.setAttribute('stroke-width','2'); line.setAttribute('opacity','0.6');
+        line.setAttribute('x1', start[0]); line.setAttribute('y1', start[1]);
+        line.setAttribute('x2', end[0]); line.setAttribute('y2', end[1]);
+        line.setAttribute('stroke', color); line.setAttribute('stroke-width','2'); line.setAttribute('opacity','0.8');
         svg.appendChild(line);
+        for (const point of [start,end]) {
+          const key = point.join(',');
+          degrees.set(key, {point, count:(degrees.get(key)?.count||0)+1});
+        }
+      });
+      if (net.wire_segments?.length) {
+        degrees.forEach(({point,count})=>{
+          if (count === 2) return;
+          const dot = document.createElementNS(ns,'circle');
+          dot.setAttribute('cx', point[0]); dot.setAttribute('cy', point[1]);
+          dot.setAttribute('r', count > 2 ? 4 : 3);
+          dot.setAttribute('fill', count > 2 ? color : '#facc15');
+          svg.appendChild(dot);
+        });
       }
     });
   }
@@ -1354,6 +1421,7 @@ function resetProject() {
   state = {fileId:null, jobId:null, manifest:null, zoom:1, pan:{x:0,y:0}, dragging:false, dragStart:{x:0,y:0}, visMode:'graph', layers:{detections:true,text:true,wires:true,pins:true,issues:true}, annotateMode:false, annotations:[], isPDF:false, pdfPages:[], currentPDFPage:0, diffMode:'side_by_side'};
   document.getElementById('fileInfo').style.display='none';
   document.getElementById('canvasImg').style.display='none';
+  document.getElementById('overlaySvg').innerHTML='';
   document.getElementById('canvasEmpty').style.display='block';
   document.getElementById('compList').innerHTML='<div class="empty"><div class="empty-text">Нет данных</div></div>';
   document.getElementById('netList').innerHTML='<div class="empty"><div class="empty-text">Нет данных</div></div>';
@@ -1364,6 +1432,7 @@ function resetProject() {
   document.querySelectorAll('.stage').forEach(s=>s.classList.remove('active','done'));
   document.querySelectorAll('.stage-time').forEach(el=>el.textContent='—');
   document.getElementById('statusText').textContent='Готов к работе';
+  document.getElementById('inferenceWarning').style.display='none';
 }
 
 // Dataset modal

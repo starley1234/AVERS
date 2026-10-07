@@ -2,6 +2,7 @@
 
 import uuid
 import time
+import os
 import json
 import base64
 import shutil
@@ -52,6 +53,17 @@ def _generate_id() -> str:
 
 def _is_pdf_file(filename: str) -> bool:
     return filename.lower().endswith(".pdf")
+
+
+def _processing_config() -> AVERSConfig:
+    """Read the Web UI configuration, including the trained detector path."""
+    override = os.environ.get("AVERS_CONFIG")
+    config_path = Path(override) if override else Path(__file__).resolve().parents[2] / "config.yaml"
+    if config_path.is_file():
+        return AVERSConfig.from_yaml(config_path)
+    if override:
+        raise FileNotFoundError(f"AVERS_CONFIG not found: {config_path}")
+    return AVERSConfig()
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -270,7 +282,7 @@ async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
         from avers.utils.image_helpers import load_image_auto
         
         # Config
-        config = AVERSConfig()
+        config = _processing_config()
         if request.config_overrides:
             for key, value in request.config_overrides.items():
                 if hasattr(config, key):
@@ -300,13 +312,15 @@ async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
                 merged_nets = []
                 merged_issues = []
                 total_timings = {}
-                
+                page_warnings = []
+
                 for page_idx, page_image in enumerate(all_pages):
                     job["current_stage"] = f"detection (page {page_idx+1}/{len(all_pages)})"
                     job["progress"] = int(10 + 80 * page_idx / len(all_pages))
                     job["updated_at"] = datetime.now()
                     
                     result = pipeline.run(page_image, f"{file_info['filename']}_page_{page_idx}", dpi=300)
+                    page_warnings.extend(result.warnings)
                     
                     # Offset bboxes by page? For now keep separate with page prefix
                     for comp in result.manifest.components:
@@ -329,6 +343,7 @@ async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
                         total_timings[k] = total_timings.get(k, 0) + v
                 
                 # Create merged manifest
+                page_warnings = list(dict.fromkeys(page_warnings))
                 from avers.core.types import AVERSManifest, SchemaMetadata
                 first_page = all_pages[0]
                 merged_manifest = AVERSManifest(
@@ -342,6 +357,7 @@ async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
                     components=merged_components,
                     nets=merged_nets,
                     human_review_required=merged_issues,
+                    processing_warnings=page_warnings,
                 )
                 
                 # Create PipelineResult
@@ -349,7 +365,7 @@ async def _run_pipeline(job_id: str, file_id: str, request: ProcessRequest):
                 result = PipelineResult(
                     manifest=merged_manifest,
                     errors=[],
-                    warnings=[f"Processed {len(all_pages)} PDF pages"],
+                    warnings=[f"Processed {len(all_pages)} PDF pages", *page_warnings],
                     stage_timings=total_timings,
                     success=True,
                 )
@@ -521,9 +537,9 @@ async def get_visualization(file_id: str, stage: str, page: int = Query(0, ge=0)
                     for pin in comp.pins:
                         cv2.circle(vis, tuple(pin.coord), 4, (255, 0, 0), -1)
                 for net in manifest.nets:
-                    pts = net.path_points
-                    for i in range(len(pts)-1):
-                        cv2.line(vis, pts[i], pts[i+1], (0, 0, 255), 1)
+                    segments = net.wire_segments or list(zip(net.path_points, net.path_points[1:]))
+                    for start, end in segments:
+                        cv2.line(vis, tuple(start), tuple(end), (0, 0, 255), 1)
                 cv2.imwrite(str(vis_path), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))
         
         elif stage == "vlm":

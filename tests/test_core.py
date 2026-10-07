@@ -86,6 +86,22 @@ class TestTypes:
         assert "test.tif" in json_str
         assert '"width":1024' in json_str or '"width": 1024' in json_str
 
+    def test_manifest_exports_processing_warnings(self, tmp_path):
+        """A partial result must remain marked as partial after export."""
+        manifest = AVERSManifest(
+            schema_metadata=SchemaMetadata(
+                source_file="scan.png", resolution_dpi=300, width=100, height=100,
+            ),
+            processing_warnings=["Детекция УГО недоступна"],
+        )
+        json_path = tmp_path / "partial.json"
+        xml_path = tmp_path / "partial.xml"
+        manifest.save(json_path, format="json")
+        manifest.save(xml_path, format="xml")
+
+        assert "Детекция УГО недоступна" in json_path.read_text(encoding="utf-8")
+        assert "Детекция УГО недоступна" in xml_path.read_text(encoding="utf-8")
+
     def test_manifest_save_json(self):
         """Test manifest save to JSON file."""
         manifest = AVERSManifest(
@@ -304,6 +320,15 @@ class TestConfig:
         assert config.slicing.tile_size == 1024
         assert config.slicing.overlap_ratio == 0.2
         assert config.graph_synthesis.snap_enabled
+        assert config.web.port == 8030
+
+    def test_web_port_matches_cli_and_yaml(self):
+        """All default Web UI launch paths use the same port."""
+        from avers.main import create_main_parser
+
+        assert create_main_parser().parse_args(["web"]).port == 8030
+        config_path = Path(__file__).resolve().parents[1] / "config.yaml"
+        assert AVERSConfig.from_yaml(config_path).web.port == 8030
 
     def test_config_override(self):
         """Test configuration overrides."""

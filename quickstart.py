@@ -108,16 +108,16 @@ try:
     print("  ✓ FastAPI app готов")
     print("""
   Запуск Web UI:
-    python -m avers web --port 8000
+    python -m avers web --port 8030
 
   Откройте:
-    http://localhost:8000           - Валидатор (загрузка схем, визуализация, редактирование)
-    http://localhost:8000/annotator - Аннотатор ГОСТ УГО (ручная разметка)
-    http://localhost:8000/docs      - API документация
+    http://localhost:8030           - Валидатор (загрузка схем, визуализация, редактирование)
+    http://localhost:8030/annotator - Аннотатор ГОСТ УГО (ручная разметка)
+    http://localhost:8030/docs      - API документация
 
   Docker:
     docker build -t avers .
-    docker run -p 8000:8000 avers
+    docker run -p 8030:8030 avers
     docker-compose up
 
   Датасет:

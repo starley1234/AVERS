@@ -143,7 +143,7 @@ ElectroNet, Roboflow Circuit Diagram, Digitize-HCD и др. Они исполь�
    ```
    (`fetch_urls()` делает паузу между запросами и использует понятный
    User-Agent; папка `raw/` в `.gitignore`, в git не попадёт).
-4. **Разметка:** `python -m avers web --port 8000` → `/annotator` → экспорт
+4. **Разметка:** `python -m avers web --port 8030` → `/annotator` → экспорт
    YOLO (train/val split).
 5. **Слияние с синтетикой перед обучением** (важно — не обучайте только на
    маленьком реальном наборе, чтобы не забыть редкие классы):

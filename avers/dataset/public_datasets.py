@@ -502,8 +502,8 @@ def get_recommended_training_strategy() -> str:
 После деплоя Web UI, собирайте feedback и дообучайте.
 
   # В Web UI исправляйте ошибки -> они идут в /tmp/avers_feedback/
-  curl http://localhost:8000/api/active-learning/stats
-  curl -X POST http://localhost:8000/api/active-learning/retrain?model_type=rtdetr-l&epochs=20
+  curl http://localhost:8030/api/active-learning/stats
+  curl -X POST http://localhost:8030/api/active-learning/retrain?model_type=rtdetr-l&epochs=20
 
 ## Итоговая модель
 Модель, обученная по этой стратегии, должна:

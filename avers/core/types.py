@@ -141,7 +141,11 @@ class Net(BaseModel):
     )
     path_points: List[Tuple[int, int]] = Field(
         default_factory=list,
-        description="Wire path as list of (x, y) points"
+        description="Wire path as list of (x, y) points (only for unbranched nets)"
+    )
+    wire_segments: List[List[Tuple[int, int]]] = Field(
+        default_factory=list,
+        description="Drawable wire pieces; each list is an independent polyline"
     )
     confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Net extraction confidence")
     intermediate_components: List[str] = Field(
@@ -203,6 +207,10 @@ class AVERSManifest(BaseModel):
     human_review_required: List[HumanReviewIssue] = Field(
         default_factory=list,
         description="Issues requiring human verification"
+    )
+    processing_warnings: List[str] = Field(
+        default_factory=list,
+        description="Missing inference backends or other limits of this result"
     )
 
     model_config = {"use_enum_values": True}
@@ -276,6 +284,10 @@ class AVERSManifest(BaseModel):
                     etree.SubElement(net_elem, key).text = str(value)
                 else:
                     etree.SubElement(net_elem, key).text = str(value)
+
+        warnings_elem = etree.SubElement(root, "processing_warnings")
+        for warning in self.processing_warnings:
+            etree.SubElement(warnings_elem, "warning").text = warning
 
         # Human review issues
         issues_elem = etree.SubElement(root, "human_review_required")

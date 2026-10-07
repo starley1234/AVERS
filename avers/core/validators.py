@@ -60,9 +60,9 @@ def get_sahi_integration() -> Optional[Any]:
 
 class SlicedDetector:
     """
-    SAHI-based sliced detection with automatic fallback.
+    SAHI-based sliced detection with safe fallback.
     
-    Uses SAHI library if available, falls back to custom implementation.
+    Without trained weights, returns no component classes instead of guessing.
     """
     
     def __init__(
@@ -84,19 +84,22 @@ class SlicedDetector:
         self._sahi = get_sahi_integration()
         self._model = None
         self._loaded = False
+        self.backend = "uninitialized"
     
     def load(self) -> bool:
         """Load detection model."""
         if self._loaded:
             return True
         
+        if not self.model_path:
+            return self._load_fallback_model()
+
         try:
             if self._sahi is not None:
                 return self._load_sahi_model()
-            else:
-                return self._load_fallback_model()
+            return self._load_fallback_model()
         except Exception as e:
-            logger.warning(f"Failed to load SAHI model: {e}, using fallback")
+            logger.warning(f"Failed to load SAHI model: {e}, skipping detection")
             return self._load_fallback_model()
     
     def _load_sahi_model(self) -> bool:
@@ -126,12 +129,14 @@ class SlicedDetector:
         )
         
         self._loaded = True
+        self.backend = "sahi"
         logger.info(f"SAHI model loaded: {self.model_type}")
         return True
     
     def _load_fallback_model(self) -> bool:
-        """Load fallback model (mock detection)."""
-        logger.info("Using fallback detector (mock mode)")
+        """Continue without classifications when no trained model is available."""
+        logger.warning("No trained detector available; component classification skipped")
+        self.backend = "unavailable"
         self._loaded = True
         return True
     
@@ -148,10 +153,9 @@ class SlicedDetector:
         if not self._loaded:
             self.load()
         
-        if self._sahi is not None and hasattr(self, "_sliced_inference"):
+        if self.backend == "sahi":
             return self._sahi_detect(image)
-        else:
-            return self._fallback_detect(image)
+        return self._fallback_detect(image)
     
     def _sahi_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """SAHI detection."""
@@ -170,46 +174,8 @@ class SlicedDetector:
         return detections
     
     def _fallback_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
-        """Fallback mock detection based on contours."""
-        detections = []
-        
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        else:
-            gray = image
-        
-        _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < 100 or area > 50000:
-                continue
-            
-            x, y, w, h = cv2.boundingRect(cnt)
-            
-            # Simple classification by size
-            if 0.8 <= w / max(h, 1) <= 1.2 and area < 5000:
-                category = "junction_dot"
-                category_id = 2
-            elif w > h * 2 and area > 5000:
-                category = "connector_body"
-                category_id = 0
-            elif area > 20000:
-                category = "relay"
-                category_id = 7
-            else:
-                category = "diode"
-                category_id = 6
-            
-            detections.append({
-                "bbox": (x, y, x + w, y + h),
-                "confidence": 0.7,
-                "category": category,
-                "category_id": category_id,
-            })
-        
-        return detections
+        """Do not invent component classes when a trained model is unavailable."""
+        return []
 
 
 # =============================================================================
@@ -220,7 +186,7 @@ class SchematicOCR:
     """
     OCR engine with automatic backend selection.
     
-    Priority: PaddleOCR > EasyOCR > Mock
+    Priority: PaddleOCR > EasyOCR > no text (if unavailable)
     """
     
     def __init__(
@@ -266,10 +232,10 @@ class SchematicOCR:
         except ImportError:
             pass
         
-        # Fallback to mock
-        self._backend = "mock"
+        # No OCR backend: do not fabricate designators from contour sizes.
+        self._backend = "unavailable"
         self._loaded = True
-        logger.warning("No OCR backend available, using mock")
+        logger.warning("No OCR backend available; text recognition skipped")
         return True
     
     def recognize(self, image: np.ndarray) -> List[Dict[str, Any]]:
@@ -290,7 +256,7 @@ class SchematicOCR:
         elif self._backend == "easyocr":
             return self._easyocr_recognize(image)
         else:
-            return self._mock_recognize(image)
+            return self._unavailable_recognize(image)
     
     def _paddleocr_recognize(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """PaddleOCR recognition."""
@@ -340,35 +306,9 @@ class SchematicOCR:
         
         return texts
     
-    def _mock_recognize(self, image: np.ndarray) -> List[Dict[str, Any]]:
-        """Mock OCR for testing."""
-        # Simple edge detection for text-like regions
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        else:
-            gray = image
-        
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        texts = []
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            
-            if h < 8 or h > 100 or w < 10 or w > 300:
-                continue
-            if h > w * 2:
-                continue
-            
-            # Generate mock text based on size
-            char_count = min(max(w // 15, 1), 6)
-            texts.append({
-                "text": "X" + str(char_count),
-                "bbox": (x, y, x + w, y + h),
-                "confidence": 0.6,
-            })
-        
-        return texts
+    def _unavailable_recognize(self, image: np.ndarray) -> List[Dict[str, Any]]:
+        """Return no text instead of invented labels when OCR is unavailable."""
+        return []
 
 
 # =============================================================================
@@ -451,32 +391,48 @@ class WireVectorizer:
             maxLineGap=10,
         )
         
-        # Create segments
+        # HoughLinesP can bridge up to 10 px of blank space. On scans this
+        # stitches the dashes of a page frame into apparent wires. Check the
+        # original (pre-Hough) skeleton for repeated gaps, but only near the
+        # page margins: a broken wire in the circuit interior is ambiguous.
+        support = cv2.dilate(skeleton, kernel) if lines is not None else None
+        height, width = gray.shape[:2]
         segments = []
         junctions = set()
-        
+
         if lines is not None:
-            for i, line in enumerate(lines):
-                if len(line.shape) == 3:
-                    x1, y1, x2, y2 = line[0]
-                else:
-                    x1, y1, x2, y2 = line
-                
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                
+            for line in lines:
+                x1, y1, x2, y2 = (int(v) for v in line.reshape(4))
+                dx, dy = abs(x2 - x1), abs(y2 - y1)
+                horizontal_frame = (dy <= max(2, dx * 0.03) and
+                                    (max(y1, y2) < height * 0.12 or
+                                     min(y1, y2) > height * 0.88))
+                vertical_frame = (dx <= max(2, dy * 0.03) and
+                                  (max(x1, x2) < width * 0.12 or
+                                   min(x1, x2) > width * 0.88))
+                if (horizontal_frame or vertical_frame) and max(dx, dy) >= 20:
+                    count = max(dx, dy) + 1
+                    xs = np.rint(np.linspace(x1, x2, count)).astype(int)
+                    ys = np.rint(np.linspace(y1, y2, count)).astype(int)
+                    ink = support[ys, xs] != 0
+                    changes = np.diff(np.r_[0, (~ink).astype(np.int8), 0])
+                    gaps = np.flatnonzero(changes == -1) - np.flatnonzero(changes == 1)
+                    if ink.mean() < 0.85 and np.count_nonzero(gaps >= 3) >= 2:
+                        continue
+
                 # RDP simplification (single segment = no simplification needed)
                 segments.append(WireSegment(
-                    segment_id=i,
+                    segment_id=len(segments),
                     start=(x1, y1),
                     end=(x2, y2),
                     points=[(x1, y1), (x2, y2)],
                     confidence=0.9,
                 ))
-                
+
                 # Track endpoints as potential junctions
                 junctions.add((x1, y1))
                 junctions.add((x2, y2))
-        
+
         return segments, junctions
 
 
@@ -556,19 +512,24 @@ class ProductionPipeline:
         # Stage 1: Detection
         stage_start = time.time()
         try:
-            detections, component_bboxes = self._run_detection(image)
+            detections, component_bboxes, detector_available = self._run_detection(image)
             result.manifest.components = self._group_components(detections)
+            if not detector_available:
+                result.warnings.append("Детекция УГО недоступна: нет обученных весов или SAHI; классы не определены")
         except Exception as e:
             result.errors.append(f"Detection failed: {e}")
             result.warnings.append("Using empty components")
             result.manifest.components = []
+            component_bboxes = []
         
         result.stage_timings["detection"] = time.time() - stage_start
         
         # Stage 2: OCR
         stage_start = time.time()
         try:
-            texts, text_bboxes = self._run_ocr(image)
+            texts, text_bboxes, ocr_available = self._run_ocr(image)
+            if not ocr_available:
+                result.warnings.append("OCR недоступен: маркировки не определены")
             # Associate texts with components
             self._associate_texts(result.manifest.components, texts)
         except Exception as e:
@@ -601,6 +562,7 @@ class ProductionPipeline:
                 segments,
                 junctions,
                 result.manifest.components,
+                image=image,
             )
             result.manifest.nets = nets
         except Exception as e:
@@ -622,6 +584,7 @@ class ProductionPipeline:
         
         # Finalize
         result.success = len(result.errors) == 0
+        result.manifest.processing_warnings = result.warnings.copy()
         result.manifest.schema_metadata.processing_time_seconds = time.time() - start_time
         
         logger.info(
@@ -633,7 +596,7 @@ class ProductionPipeline:
     
     def _run_detection(
         self, image: np.ndarray
-    ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]]]:
+    ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]], bool]:
         """Run component detection."""
         detector = SlicedDetector(
             model_path=self.config.detection.model_path,
@@ -647,7 +610,7 @@ class ProductionPipeline:
         detections = detector.detect(image)
         bboxes = [d["bbox"] for d in detections]
         
-        return detections, bboxes
+        return detections, bboxes, detector.backend == "sahi"
     
     def _group_components(
         self, detections: List[Dict]
@@ -721,7 +684,7 @@ class ProductionPipeline:
     
     def _run_ocr(
         self, image: np.ndarray
-    ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]]]:
+    ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]], bool]:
         """Run OCR."""
         ocr = SchematicOCR(
             lang=self.config.ocr.lang,
@@ -731,7 +694,7 @@ class ProductionPipeline:
         texts = ocr.recognize(image)
         bboxes = [t["bbox"] for t in texts]
         
-        return texts, bboxes
+        return texts, bboxes, ocr._backend != "unavailable"
     
     def _associate_texts(
         self,
@@ -776,12 +739,15 @@ class ProductionPipeline:
         segments: List[WireSegment],
         junctions: set,
         components: List[Component],
+        image: Optional[np.ndarray] = None,
     ) -> List[Net]:
-        """Run graph synthesis."""
+        """Run graph synthesis, verifying longer wire gaps against source pixels."""
         builder = GraphBuilder(
             snap_enabled=self.config.graph_synthesis.snap_enabled,
             snap_radius=self.config.graph_synthesis.snap_radius,
             merge_collinear=self.config.graph_synthesis.merge_collinear_segments,
+            gap_image=image,
+            max_supported_gap=self.config.graph_synthesis.max_supported_gap,
         )
         
         # Add segments
@@ -815,6 +781,7 @@ class ProductionPipeline:
                     WireConnection(**c) for c in net_data.get("connections", [])
                 ],
                 path_points=net_data.get("path_points", []),
+                wire_segments=net_data.get("wire_segments", []),
                 confidence=net_data.get("confidence", 1.0),
             ))
         

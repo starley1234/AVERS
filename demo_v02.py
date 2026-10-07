@@ -142,10 +142,10 @@ for route in app.routes:
         print(f"    {route.path}")
 
 print("\nЗапуск Web UI:")
-print("  python -m avers web --port 8000")
-print("  Откройте http://localhost:8000")
-print("  Аннотатор: http://localhost:8000/annotator")
-print("  API docs: http://localhost:8000/docs")
+print("  python -m avers web --port 8030")
+print("  Откройте http://localhost:8030")
+print("  Аннотатор: http://localhost:8030/annotator")
+print("  API docs: http://localhost:8030/docs")
 
 # 6. Full pipeline with RAG integration
 print("\n6. Полный пайплайн с Vision RAG")
@@ -218,7 +218,7 @@ print("""
 Запуск:
   pip install -r requirements.txt
   pip install fastapi uvicorn  # для Web UI
-  python -m avers web --port 8000
+  python -m avers web --port 8030
   python -m avers dataset generate --output /tmp/dataset --num-train 1000
   python demo_v02.py
 """)

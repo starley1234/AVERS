@@ -4,7 +4,7 @@ services:
   avers-web:
     build: .
     ports:
-      - "8000:8000"
+      - "8030:8030"
     volumes:
       - ./data:/app/data
       - avers_uploads:/tmp/avers_uploads
@@ -17,7 +17,7 @@ services:
       - CUDA_VISIBLE_DEVICES=0
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8030/health"]
       interval: 30s
       timeout: 10s
       retries: 3

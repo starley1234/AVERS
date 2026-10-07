@@ -18,7 +18,7 @@ slicing:
 
 # Stage 2: Object Detection (RT-DETR/YOLO)
 detection:
-  model_path: null             # Path to model weights (null = download default)
+  model_path: null             # Path to trained weights (null = no component classification)
   model_type: yolo              # 'yolo' or 'rtdetr'
   model_name: yolov11x
   confidence_threshold: 0.25
@@ -55,6 +55,7 @@ graph_synthesis:
   text_association_radius: 50  # Max distance for text-to-component association
   merge_collinear_segments: true
   merge_tolerance: 5.0         # Tolerance for collinear merge
+  max_supported_gap: 60       # Reconnect only continuous-ink gaps <= 60 px; 0 disables
 
 # Stage 6: VLM Arbitration
 vlm_arbitrator:
@@ -110,7 +111,7 @@ training:
 # Web UI (NEW in v0.2)
 web:
   host: 0.0.0.0
-  port: 8000
+  port: 8030
   reload: false
   workers: 1
   upload_dir: /tmp/avers_uploads

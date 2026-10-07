@@ -48,29 +48,29 @@ Backend (FastAPI)
 ### Запуск
 
 ```bash
-python -m avers web --host 0.0.0.0 --port 8000 --reload
-# http://localhost:8000
-# http://localhost:8000/annotator
-# http://localhost:8000/docs
+python -m avers web --host 0.0.0.0 --port 8030 --reload
+# http://localhost:8030
+# http://localhost:8030/annotator
+# http://localhost:8030/docs
 ```
 
 ### API примеры
 
 ```bash
 # Upload
-curl -X POST -F "file=@schema.tif" http://localhost:8000/api/upload
+curl -X POST -F "file=@schema.tif" http://localhost:8030/api/upload
 
 # Process
-curl -X POST http://localhost:8000/api/process/{file_id} -H "Content-Type: application/json" -d '{"config_overrides": {"slicing": {"tile_size": 1024}}}'
+curl -X POST http://localhost:8030/api/process/{file_id} -H "Content-Type: application/json" -d '{"config_overrides": {"slicing": {"tile_size": 1024}}}'
 
 # Status
-curl http://localhost:8000/api/status/{job_id}
+curl http://localhost:8030/api/status/{job_id}
 
 # Result
-curl http://localhost:8000/api/result/{file_id}
+curl http://localhost:8030/api/result/{file_id}
 
 # Export
-curl http://localhost:8000/api/export/{file_id}?format=json -o result.json
+curl http://localhost:8030/api/export/{file_id}?format=json -o result.json
 ```
 
 ---
@@ -181,16 +181,16 @@ python -m avers dataset export --input /tmp/avers_dataset --output /tmp/coco.jso
 
 ```bash
 # Upload для разметки
-curl -X POST -F "file=@img.jpg" http://localhost:8000/api/annotator/upload
+curl -X POST -F "file=@img.jpg" http://localhost:8030/api/annotator/upload
 
 # List
-curl http://localhost:8000/api/annotator/images
+curl http://localhost:8030/api/annotator/images
 
 # Update annotations
-curl -X PUT http://localhost:8000/api/annotator/images/{id}/annotations -H "Content-Type: application/json" -d '{"annotations": [{"class_id": 0, "class_name": "connector_body", "bbox": [10,20,100,200]}]}'
+curl -X PUT http://localhost:8030/api/annotator/images/{id}/annotations -H "Content-Type: application/json" -d '{"annotations": [{"class_id": 0, "class_name": "connector_body", "bbox": [10,20,100,200]}]}'
 
 # Export
-curl -X POST http://localhost:8000/api/annotator/export -H "Content-Type: application/json" -d '{"output_dir": "/tmp/export", "split_ratio": 0.8}'
+curl -X POST http://localhost:8030/api/annotator/export -H "Content-Type: application/json" -d '{"output_dir": "/tmp/export", "split_ratio": 0.8}'
 ```
 
 ### Python API
@@ -413,8 +413,8 @@ python -m avers rag query --text "junction dot" --image query.jpg --top-k 5
 python -m avers rag stats
 
 # Или через API
-curl -X POST http://localhost:8000/api/rag/index -H "Content-Type: application/json" -d '{"image_base64": "...", "bbox": [0,0,256,256], "label": "junction_dot", "description": "connected"}'
-curl -X POST http://localhost:8000/api/rag/query -H "Content-Type: application/json" -d '{"text_query": "junction dot", "top_k": 5, "use_vlm": true}'
+curl -X POST http://localhost:8030/api/rag/index -H "Content-Type: application/json" -d '{"image_base64": "...", "bbox": [0,0,256,256], "label": "junction_dot", "description": "connected"}'
+curl -X POST http://localhost:8030/api/rag/query -H "Content-Type: application/json" -d '{"text_query": "junction dot", "top_k": 5, "use_vlm": true}'
 ```
 
 ### Преимущества RAG для АВЕРС

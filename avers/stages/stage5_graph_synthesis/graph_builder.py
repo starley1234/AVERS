@@ -10,7 +10,8 @@ Implements:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict, Set, Iterator
+from math import hypot
+from typing import List, Tuple, Optional, Dict
 from pathlib import Path
 import cv2
 import networkx as nx
@@ -110,6 +111,9 @@ class GraphBuilder:
         text_association_radius: int = 50,
         merge_collinear: bool = True,
         merge_tolerance: float = 5.0,
+        junction_tolerance: float = 2.0,
+        gap_image: Optional[np.ndarray] = None,
+        max_supported_gap: int = 60,
     ):
         """
         Initialize graph builder.
@@ -120,12 +124,18 @@ class GraphBuilder:
             text_association_radius: Max distance for text association
             merge_collinear: Merge collinear wire segments
             merge_tolerance: Tolerance for collinear merge
+            junction_tolerance: Maximum endpoint/segment gap to join (pixels)
+            gap_image: Source image for verifying longer collinear wire gaps
+            max_supported_gap: Largest gap joined only with continuous ink evidence
         """
         self.snap_enabled = snap_enabled
         self.snap_radius = snap_radius
         self.text_association_radius = text_association_radius
         self.merge_collinear = merge_collinear
         self.merge_tolerance = merge_tolerance
+        self.junction_tolerance = junction_tolerance
+        self.gap_image = gap_image
+        self.max_supported_gap = max_supported_gap
 
         # Graph data structures
         self.graph = nx.MultiGraph()
@@ -198,24 +208,19 @@ class GraphBuilder:
         for seg_id, segment in self.wire_segments.items():
             snapped = None
 
-            # Check both endpoints
-            for endpoint in [segment.start, segment.end]:
-                # Query nearby pins
+            # Both ends may terminate at different pins. Keep the historical
+            # return value (the first match), but attach both in build_graph.
+            for end_name in ("start", "end"):
+                endpoint = getattr(segment, end_name)
                 dist, idx = self.component_pins_kdtree.query(
-                    endpoint,
-                    k=1,
-                    distance_upper_bound=self.snap_radius,
+                    endpoint, k=1, distance_upper_bound=self.snap_radius,
                 )
-
                 if dist <= self.snap_radius:
-                    snapped = self.pins[idx]
-                    # Update wire endpoint to exact pin position
-                    if endpoint == segment.start:
-                        segment.start = snapped.coord
-                    else:
-                        segment.end = snapped.coord
-                    break
-
+                    pin = self.pins[idx]
+                    if snapped is None:
+                        snapped = pin
+                    setattr(segment, end_name, pin.coord)
+            segment.__post_init__()
             snapping[seg_id] = snapped
 
         return snapping
@@ -231,47 +236,32 @@ class GraphBuilder:
             return 0
 
         merged = 0
-        segments_to_remove = set()
-
-        segment_ids = list(self.wire_segments.keys())
-
-        for i, seg_id in enumerate(segment_ids):
-            if seg_id in segments_to_remove:
-                continue
-
-            seg1 = self.wire_segments[seg_id]
-
-            for other_id in segment_ids[i + 1:]:
-                if other_id in segments_to_remove:
-                    continue
-
-                seg2 = self.wire_segments[other_id]
-
-                # Check if collinear and adjacent
-                if self._are_collinear_and_connected(seg1, seg2):
-                    # Merge: create new segment spanning both
-                    new_start = min(seg1.start, seg2.start, key=lambda p: (p[0], p[1]))
-                    new_end = max(seg1.end, seg2.end, key=lambda p: (p[0], p[1]))
-
-                    merged_seg = WireSegment(
-                        segment_id=self.next_segment_id,
-                        start=new_start,
-                        end=new_end,
-                        points=[new_start, new_end],
-                        confidence=min(seg1.confidence, seg2.confidence),
-                    )
-
-                    self.wire_segments[self.next_segment_id] = merged_seg
-                    self.next_segment_id += 1
-
-                    segments_to_remove.add(seg_id)
-                    segments_to_remove.add(other_id)
-                    merged += 1
-
-        # Remove merged segments
-        for seg_id in segments_to_remove:
-            del self.wire_segments[seg_id]
-
+        # Restart after each merge so a segment is never consumed twice.
+        while True:
+            segment_ids = sorted(self.wire_segments)
+            pair = next(
+                ((first, second)
+                 for i, first in enumerate(segment_ids)
+                 for second in segment_ids[i + 1:]
+                 if self._are_collinear_and_connected(
+                     self.wire_segments[first], self.wire_segments[second],
+                 )),
+                None,
+            )
+            if pair is None:
+                break
+            seg1, seg2 = (self.wire_segments.pop(sid) for sid in pair)
+            endpoints = (seg1.start, seg1.end, seg2.start, seg2.end)
+            new_start, new_end = min(endpoints), max(endpoints)
+            self.wire_segments[self.next_segment_id] = WireSegment(
+                segment_id=self.next_segment_id,
+                start=new_start,
+                end=new_end,
+                points=[new_start, new_end],
+                confidence=min(seg1.confidence, seg2.confidence),
+            )
+            self.next_segment_id += 1
+            merged += 1
         return merged
 
     def _are_collinear_and_connected(
@@ -280,100 +270,205 @@ class GraphBuilder:
         seg2: WireSegment,
         angle_tolerance: float = 5.0,
     ) -> bool:
-        """Check if two segments are collinear and share an endpoint."""
-        # Check if they share an endpoint
-        if seg1.end == seg2.start:
-            shared = seg1.end
-        elif seg1.start == seg2.end:
-            shared = seg1.start
-        else:
-            # Check if endpoints are close
-            dist = np.sqrt(
-                (seg1.end[0] - seg2.start[0])**2 +
-                (seg1.end[1] - seg2.start[1])**2
-            )
-            if dist > self.merge_tolerance:
-                return False
-            shared = seg1.end
-
-        # Check collinearity (both horizontal or both vertical)
-        if not (seg1.is_horizontal and seg2.is_horizontal) and \
-           not (seg1.is_vertical and seg2.is_vertical):
+        """Merge only straight, aligned wires sharing an unpinned endpoint."""
+        if (len(seg1.points) > 2 or len(seg2.points) > 2):
             return False
+        horizontal = (seg1.start[1] == seg1.end[1] ==
+                      seg2.start[1] == seg2.end[1])
+        vertical = (seg1.start[0] == seg1.end[0] ==
+                    seg2.start[0] == seg2.end[0])
+        if not (horizontal or vertical):
+            return False
+        for a in (seg1.start, seg1.end):
+            for b in (seg2.start, seg2.end):
+                if hypot(a[0] - b[0], a[1] - b[1]) <= min(
+                    self.merge_tolerance, self.junction_tolerance,
+                ) and not any(pin.coord == a or pin.coord == b for pin in self.pins):
+                    return True
+        return False
 
-        return True
+    @staticmethod
+    def _wire_node(coord: Tuple[int, int]) -> str:
+        return f"wire_{coord[0]}_{coord[1]}"
+
+    @staticmethod
+    def _project(point, start, end):
+        """Closest point on a finite leg, with its normalized position."""
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        length_sq = dx * dx + dy * dy
+        if not length_sq:
+            return 0.0, start, hypot(point[0] - start[0], point[1] - start[1])
+        t = max(0.0, min(1.0, ((point[0] - start[0]) * dx +
+                                 (point[1] - start[1]) * dy) / length_sq))
+        x, y = start[0] + t * dx, start[1] + t * dy
+        coord = (round(x), round(y))
+        return t, coord, hypot(point[0] - x, point[1] - y)
+
+    def _add_wire_edge(self, start, end, segment_id=None):
+        if start == end:
+            return
+        for coord in (start, end):
+            self.graph.add_node(self._wire_node(coord), type="wire", coord=coord)
+        self.graph.add_edge(
+            self._wire_node(start), self._wire_node(end),
+            kind="wire", segment_id=segment_id,
+            points=[start, end], weight=hypot(end[0] - start[0], end[1] - start[1]),
+        )
+
+    def _gap_has_ink(self, start: Tuple[int, int], end: Tuple[int, int], gray: np.ndarray) -> bool:
+        """Require an almost continuous thin stroke before bridging a Hough gap."""
+        length = max(abs(end[0] - start[0]), abs(end[1] - start[1]))
+        if length < 3 or length > self.max_supported_gap:
+            return False
+        height, width = gray.shape[:2]
+        samples = 0
+        covered = 0
+        for t in np.linspace(0, 1, length + 1)[1:-1]:
+            x = round(start[0] + t * (end[0] - start[0]))
+            y = round(start[1] + t * (end[1] - start[1]))
+            if not (0 <= x < width and 0 <= y < height):
+                return False
+            samples += 1
+            covered += bool(np.any(gray[max(0, y - 1):min(height, y + 2),
+                                        max(0, x - 1):min(width, x + 2)] < 160))
+        return samples > 0 and covered / samples >= 0.9
+
+    def _connect_supported_gaps(self) -> None:
+        """Join collinear wire ends only when the source image shows ink between them."""
+        if self.gap_image is None or self.max_supported_gap < 3:
+            return
+        gray = (cv2.cvtColor(self.gap_image, cv2.COLOR_RGB2GRAY)
+                if self.gap_image.ndim == 3 else self.gap_image)
+        leaves = [node for node, data in self.graph.nodes(data=True)
+                  if data.get("type") == "wire" and self.graph.degree(node) == 1]
+        if len(leaves) < 2:
+            return
+        coords = np.array([self.graph.nodes[node]["coord"] for node in leaves])
+        tree = KDTree(coords)
+        candidates = sorted(tree.query_pairs(self.max_supported_gap),
+                            key=lambda pair: (hypot(*(coords[pair[0]] - coords[pair[1]])), pair))
+        connected = nx.utils.UnionFind(self.graph.nodes)
+        for a, b in self.graph.edges():
+            connected.union(a, b)
+        for i, j in candidates:
+            a, b = leaves[i], leaves[j]
+            if connected[a] == connected[b]:
+                continue
+            start = tuple(map(int, coords[i]))
+            end = tuple(map(int, coords[j]))
+            dx, dy = abs(end[0] - start[0]), abs(end[1] - start[1])
+            horizontal = dy <= self.junction_tolerance and dx >= 3
+            vertical = dx <= self.junction_tolerance and dy >= 3
+            if not (horizontal or vertical):
+                continue
+            if (horizontal and start[0] > end[0]) or (vertical and start[1] > end[1]):
+                a, b = b, a
+                start, end = end, start
+            # Both ends must point toward the gap, not be parallel tails.
+            aligned = True
+            for node, is_first in ((a, True), (b, False)):
+                neighbor = next(iter(self.graph.neighbors(node)))
+                x, y = self.graph.nodes[node]["coord"]
+                nx_, ny_ = self.graph.nodes[neighbor]["coord"]
+                if horizontal and (abs(y - ny_) > 2 or
+                                   (nx_ >= x if is_first else nx_ <= x)):
+                    aligned = False
+                if vertical and (abs(x - nx_) > 2 or
+                                 (ny_ >= y if is_first else ny_ <= y)):
+                    aligned = False
+            if aligned and self._gap_has_ink(start, end, gray):
+                self._add_wire_edge(start, end)
+                connected.union(a, b)
 
     def build_graph(self) -> nx.MultiGraph:
-        """
-        Build NetworkX graph from wire segments and component pins.
+        """Build a conservative topology: only endpoints can establish joins.
 
-        Returns:
-            NetworkX MultiGraph representing the schematic
+        A T endpoint splits the leg it touches; a crossing between two leg
+        interiors is never joined without explicit junction evidence.
         """
         self.graph = nx.MultiGraph()
+        segments = sorted(self.wire_segments.items())
+        endpoints = sorted({point for _, seg in segments for point in (seg.start, seg.end)})
+        # Canonicalize close endpoints, without modifying the input segments.
+        canonical = {}
+        representatives = []
+        for point in endpoints:
+            match = next((p for p in representatives
+                          if hypot(point[0] - p[0], point[1] - p[1]) <= self.junction_tolerance), None)
+            if match is None:
+                match = point
+                representatives.append(point)
+            canonical[point] = match
 
-        # Add wire segments as edges
-        for seg_id, segment in self.wire_segments.items():
-            start_node = f"wire_{segment.start[0]}_{segment.start[1]}"
-            end_node = f"wire_{segment.end[0]}_{segment.end[1]}"
+        legs = {}
+        for seg_id, seg in segments:
+            # Stage 4 supplies full polylines. The stored endpoints may have
+            # changed since then when snap_wire_to_pins() was called.
+            points = [canonical[seg.start], *seg.points[1:-1], canonical[seg.end]]
+            for index, (a, b) in enumerate(zip(points, points[1:])):
+                if a != b:
+                    legs[(seg_id, index)] = (a, b)
 
-            self.graph.add_edge(
-                start_node,
-                end_node,
-                key=seg_id,
-                segment_id=seg_id,
-                weight=segment.length,
-            )
+        splits = {key: [(0.0, a), (1.0, b)] for key, (a, b) in legs.items()}
+        joins = set()
+        for seg_id, seg in segments:
+            for raw in (seg.start, seg.end):
+                point = canonical[raw]
+                for (other_id, index), (a, b) in legs.items():
+                    if other_id == seg_id:
+                        continue
+                    t, target, distance = self._project(point, a, b)
+                    if distance > self.junction_tolerance:
+                        continue
+                    # A rounded projection at a leg end must use its existing node.
+                    if t == 0.0:
+                        target = a
+                    elif t == 1.0:
+                        target = b
+                    splits[(other_id, index)].append((t, target))
+                    if point != target:
+                        joins.add(tuple(sorted((point, target))))
 
-        # Add component pins as nodes
+        for (seg_id, index), candidates in sorted(splits.items()):
+            ordered = sorted(candidates)
+            for (_, a), (_, b) in zip(ordered, ordered[1:]):
+                self._add_wire_edge(a, b, segment_id=seg_id)
+        for a, b in sorted(joins):
+            # The short snapped bridge is genuine geometry, not an arbitrary
+            # link between unrelated edges of a net.
+            self._add_wire_edge(a, b)
+
+        self._connect_supported_gaps()
+
         for pin in self.pins:
             node_id = f"pin_{pin.component_id}_{pin.pin_number}"
             self.graph.add_node(
-                node_id,
-                type="pin",
-                component_id=pin.component_id,
-                pin_number=pin.pin_number,
-                coord=pin.coord,
+                node_id, type="pin", component_id=pin.component_id,
+                pin_number=pin.pin_number, coord=pin.coord,
             )
+            # Pins attach only to actual (possibly pre-snapped) wire endpoints.
+            if pin.coord in canonical:
+                wire_node = self._wire_node(canonical[pin.coord])
+                if self.graph.has_node(wire_node):
+                    self.graph.add_edge(node_id, wire_node, kind="pin")
 
-        # Add junctions (T and X crossings)
         self._detect_junctions()
-
         return self.graph
 
     def _detect_junctions(self) -> List[Tuple[int, int, str]]:
-        """
-        Detect T-junctions and X-crossings in the wire network.
-
-        Returns:
-            List of (x, y, junction_type) tuples
-        """
+        """Label connected wire nodes with three or more incident wire legs."""
         junctions = []
-
-        # Build coordinate to node mapping
-        coord_to_nodes: Dict[Tuple[int, int], List[str]] = {}
-
-        for node in self.graph.nodes():
-            if node.startswith("wire_"):
-                _, x, y = node.rsplit("_", 2)
-                coord = (int(x), int(y))
-                if coord not in coord_to_nodes:
-                    coord_to_nodes[coord] = []
-                coord_to_nodes[coord].append(node)
-
-        # Detect nodes with degree > 2 (junctions)
-        for coord, nodes in coord_to_nodes.items():
-            if len(nodes) > 2:
-                # T or X junction
-                junction_type = "T" if len(nodes) == 3 else "X"
-                junctions.append((*coord, junction_type))
-
-                # Update node attributes
-                for node in nodes:
-                    if self.graph.has_node(node):
-                        self.graph.nodes[node]["is_junction"] = True
-                        self.graph.nodes[node]["junction_type"] = junction_type
-
+        for node, data in self.graph.nodes(data=True):
+            if data.get("type") != "wire":
+                continue
+            degree = sum(attributes.get("kind") == "wire"
+                         for parallel_edges in self.graph[node].values()
+                         for attributes in parallel_edges.values())
+            if degree >= 3:
+                kind = "T" if degree == 3 else "X"
+                data["is_junction"] = True
+                data["junction_type"] = kind
+                junctions.append((*data["coord"], kind))
         return junctions
 
     def extract_nets(
@@ -392,47 +487,42 @@ class GraphBuilder:
         nets = []
         net_id_counter = 0
 
-        # Find connected components in the graph
-        for component in nx.connected_components(self.graph):
+        # Stable ordering independent of NetworkX's edge traversal order.
+        for component in sorted(nx.connected_components(self.graph), key=lambda c: min(c)):
             subgraph = self.graph.subgraph(component)
+            connections = sorted(
+                ({"component_id": data["component_id"], "pin": data["pin_number"]}
+                 for _, data in subgraph.nodes(data=True) if data.get("type") == "pin"),
+                key=lambda c: (c["component_id"], c["pin"]),
+            )
 
-            # Get pin connections
-            connections = []
-            for node in subgraph.nodes():
-                node_data = subgraph.nodes[node]
-                if node_data.get("type") == "pin":
-                    connections.append({
-                        "component_id": node_data["component_id"],
-                        "pin": node_data["pin_number"],
-                    })
-
-            # Extract wire path
-            path_points = []
+            wire_graph = nx.Graph()
+            wire_segments = []
             for u, v, data in subgraph.edges(data=True):
-                if u.startswith("wire_"):
-                    _, x1, y1 = u.rsplit("_", 2)
-                    path_points.append((int(x1), int(y1)))
-                if v.startswith("wire_"):
-                    _, x2, y2 = v.rsplit("_", 2)
-                    path_points.append((int(x2), int(y2)))
+                if data.get("kind") != "wire":
+                    continue
+                a, b = data["points"]
+                wire_segments.append([min(a, b), max(a, b)])
+                wire_graph.add_edge(u, v)
+            wire_segments.sort()
 
-            # Deduplicate path points
-            if path_points:
-                path_points = self._deduplicate_path(path_points)
+            # A single path remains backwards compatible. A branch/cycle
+            # cannot be flattened into one polyline without inventing strokes.
+            leaves = [node for node, degree in wire_graph.degree() if degree == 1]
+            path_points = []
+            if len(leaves) == 2 and all(degree <= 2 for _, degree in wire_graph.degree()):
+                start, end = sorted(leaves, key=lambda node: self.graph.nodes[node]["coord"])
+                path = nx.shortest_path(wire_graph, start, end)
+                path_points = [self.graph.nodes[node]["coord"] for node in path]
 
-            # Calculate confidence
-            confidence = 1.0
-            if len(connections) < 2:
-                confidence *= 0.5  # Incomplete net
-
-            net = {
+            confidence = 1.0 if len(connections) >= 2 else 0.5
+            nets.append({
                 "net_id": f"NET_{net_id_counter:03d}",
                 "connections": connections,
                 "path_points": path_points,
+                "wire_segments": wire_segments,
                 "confidence": confidence,
-            }
-
-            nets.append(net)
+            })
             net_id_counter += 1
 
         return nets
@@ -550,12 +640,12 @@ class GraphBuilder:
             y = pin.coord[1] - min_y + padding
             cv2.circle(vis, (x, y), 5, (0, 200, 0), -1)
 
-        # Draw junctions
-        for coord, nodes in self._group_nodes_by_coord().items():
-            if len(nodes) > 2:
-                x = coord[0] - min_x + padding
-                y = coord[1] - min_y + padding
-                cv2.circle(vis, (x, y), 8, (0, 0, 255), -1)
+        # Draw only joined junctions (not interior/interior crossings).
+        for _, data in self.graph.nodes(data=True):
+            if data.get("is_junction"):
+                x, y = data["coord"]
+                cv2.circle(vis, (x - min_x + padding, y - min_y + padding),
+                           8, (0, 0, 255), -1)
 
         if output_path:
             cv2.imwrite(str(output_path), vis)

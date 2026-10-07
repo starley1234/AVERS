@@ -163,13 +163,13 @@ python -m avers dataset train --data /tmp/mixed/dataset_mixed.yaml --model rtdet
 ### Этап 4: Active Learning на реальных БКС
 ```bash
 # Запустите Web UI, исправляйте ошибки
-python -m avers web --port 8000
+python -m avers web --port 8030
 
 # Feedback автоматически идет в /tmp/avers_feedback/ и RAG
-curl http://localhost:8000/api/active-learning/stats
+curl http://localhost:8030/api/active-learning/stats
 
 # Дообучение на feedback
-curl -X POST http://localhost:8000/api/active-learning/retrain?model_type=rtdetr-l&epochs=20
+curl -X POST http://localhost:8030/api/active-learning/retrain?model_type=rtdetr-l&epochs=20
 ```
 
 ---

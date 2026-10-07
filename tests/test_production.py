@@ -182,6 +182,20 @@ class TestProductionPipeline:
         assert result.manifest.schema_metadata.width == 400
         assert result.manifest.schema_metadata.height == 400
     
+    def test_no_invented_diode_without_model(self):
+        """A wire through a rectangle must not become a diode in fallback mode."""
+        import cv2
+
+        image = np.full((128, 128, 3), 255, dtype=np.uint8)
+        cv2.line(image, (8, 64), (120, 64), (0, 0, 0), 2)
+        cv2.rectangle(image, (50, 50), (78, 78), (0, 0, 0), 2)
+
+        result = ProductionPipeline().run(image, "avers-smoke.png")
+
+        assert result.manifest.components == []
+        assert any("Детекция УГО недоступна" in warning for warning in result.warnings)
+        assert result.manifest.processing_warnings == result.warnings
+
     def test_component_grouping(self):
         """Test component grouping logic."""
         pipeline = ProductionPipeline()

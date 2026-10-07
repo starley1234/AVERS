@@ -34,15 +34,15 @@ RUN pip install --no-cache-dir --upgrade pip && \
 RUN mkdir -p /tmp/avers_uploads /tmp/avers_results /tmp/avers_dataset /tmp/avers_rag /tmp/avers_feedback
 
 # Expose Web UI port
-EXPOSE 8000
+EXPOSE 8030
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:8030/health || exit 1
 
 # Default command - Web UI
-CMD ["python", "-m", "avers", "web", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "avers", "web", "--host", "0.0.0.0", "--port", "8030"]
 
 # For CLI usage: docker run avers process input.tif -o output.json
-# For Web UI: docker run -p 8000:8000 avers
-# For with GPU: docker run --gpus all -p 8000:8000 avers
+# For Web UI: docker run -p 8030:8030 avers
+# For with GPU: docker run --gpus all -p 8030:8030 avers

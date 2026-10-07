@@ -51,7 +51,7 @@ python -m avers process data/reference_schematics/tier1_simple_car/vaz_2101_wiri
     --output /tmp/vaz_2101_result.json
 
 # Или открыть в Web UI валидаторе и разметить вручную через /annotator
-python -m avers web --port 8000
+python -m avers web --port 8030
 ```
 
 ## Масштабирование на GPU-машине

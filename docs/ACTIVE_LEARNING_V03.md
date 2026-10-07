@@ -103,8 +103,8 @@ Model Registry и подтягивайте через `get_model_registry().get_
 ```bash
 export AVERS_AL_SCHEDULER_ENABLED=true   # запускает RetrainScheduler при старте приложения
 export AVERS_NOTIFY_WEBHOOK_URL=https://hooks.slack.com/...  # опционально
-python -m avers web --port 8000
-# http://localhost:8000/dashboard  <- мониторинг feedback/scheduler/registry
+python -m avers web --port 8030
+# http://localhost:8030/dashboard  <- мониторинг feedback/scheduler/registry
 ```
 Исправляйте проблемы в валидаторе → `resolve_issue` уже автоматически
 добавляет feedback в `ActiveLearningLoop` и индексирует в RAG (см.

@@ -23,6 +23,35 @@ def test_create_app():
     assert app.title.startswith("АВЕРС")
 
 
+def test_web_processing_reads_model_path(tmp_path, monkeypatch):
+    from avers.config import AVERSConfig
+    from avers.web.api import _processing_config
+
+    config = AVERSConfig()
+    config.detection.model_path = "trained-symbols.pt"
+    config_path = tmp_path / "config.yaml"
+    config.to_yaml(config_path)
+    monkeypatch.setenv("AVERS_CONFIG", str(config_path))
+
+    assert _processing_config().detection.model_path == "trained-symbols.pt"
+
+
+def test_3d_graph_draws_branched_net_segments():
+    from avers.core.types import Net
+    from avers.web.visualization import visualize_graph_3d
+
+    net = Net(net_id="NET_T", wire_segments=[
+        [(0, 10), (50, 10)],
+        [(50, 10), (100, 10)],
+        [(50, 10), (50, 50)],
+    ])
+    graph = visualize_graph_3d([], [net])
+
+    assert graph["stats"]["nets"] == 1
+    assert len([edge for edge in graph["edges"] if edge["type"] == "wire"]) == 3
+    assert graph["stats"]["wires"] == 4
+
+
 def test_annotator_imports():
     from avers.web.annotator_api import router
     from avers.dataset.annotator import AnnotationStore, get_store

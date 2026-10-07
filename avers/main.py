@@ -6,7 +6,7 @@ Main entry point for the command-line interface.
 
 Commands:
   avers process input.tif --output result.json  # Process schematic
-  avers web --port 8000                         # Start Web UI validator
+  avers web --port 8030                         # Start Web UI validator
   avers dataset generate ...                    # Generate synthetic dataset
   avers dataset train ...                       # Train RT-DETR/YOLO
   avers rag query ...                           # Vision RAG query
@@ -31,7 +31,7 @@ def create_main_parser() -> argparse.ArgumentParser:
         epilog="""
 Примеры:
   %(prog)s process input.tif --output result.json
-  %(prog)s web --port 8000 --host 0.0.0.0
+  %(prog)s web --port 8030 --host 0.0.0.0
   %(prog)s dataset generate --output /tmp/avers_dataset --num-train 1000
   %(prog)s dataset train --data /tmp/avers_dataset/dataset.yaml --model rtdetr-l
   %(prog)s dataset preview --output /tmp/preview --num 20
@@ -61,7 +61,7 @@ def create_main_parser() -> argparse.ArgumentParser:
     # Web UI command
     web_parser = subparsers.add_parser("web", help="Запустить Web UI валидатор")
     web_parser.add_argument("--host", type=str, default="0.0.0.0", help="Host (default: 0.0.0.0)")
-    web_parser.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
+    web_parser.add_argument("--port", type=int, default=8030, help="Port (default: 8030)")
     web_parser.add_argument("--reload", action="store_true", help="Auto-reload")
     web_parser.add_argument("--workers", type=int, default=1, help="Workers")
     
