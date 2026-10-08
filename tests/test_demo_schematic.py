@@ -68,6 +68,30 @@ def test_demo_works_at_another_scale(demo):
     assert ev["nets_matched"] == 11, (ev["missing_nets"], ev["extra_nets"])
 
 
+def test_large_sheet_with_thick_lines(demo, monkeypatch):
+    """x3 sheet (4800x2700, ~8 px lines): pixel tolerances must scale with the
+    stroke; crossings of thick lines must not become T-joints."""
+    from avers.core.validators import SchematicOCR
+
+    image, truth = demo
+    s = 3
+    big = cv2.resize(image, None, fx=s, fy=s, interpolation=cv2.INTER_NEAREST)
+    scaled = json.loads(json.dumps(truth))
+    labels = []
+    for comp in scaled["components"]:
+        comp["bbox"] = [v * s for v in comp["bbox"]]
+        if not comp["designator"].startswith("_"):
+            x0, y0, x1, _ = comp["bbox"]
+            labels.append({"text": comp["designator"], "bbox": (x0, max(0, y0 - 80), x0 + 100, y0 - 30),
+                           "confidence": 0.9})
+    monkeypatch.setattr(SchematicOCR, "load", lambda self: setattr(self, "_backend", "fake") or True)
+    monkeypatch.setattr(SchematicOCR, "recognize", lambda self, img: [dict(t) for t in labels])
+    _, ev = _run(big, scaled)
+    assert ev["components_found"] == 19
+    assert ev["nets_matched"] == 11, (ev["missing_nets"], ev["extra_nets"])
+    assert ev["designators_from_ocr"] == ev["designators_expected"]
+
+
 def test_committed_demo_files_match_generator(demo):
     image, truth = demo
     png = DATA / "demo_bks_schematic.png"

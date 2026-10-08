@@ -275,7 +275,7 @@ class TestConvenienceFunctions:
             assert output_path.exists()
             
             # Verify saved content
-            content = output_path.read_text()
+            content = output_path.read_text(encoding="utf-8")  # manifest is UTF-8 (Windows default is cp1251)
             assert "schema_metadata" in content
         finally:
             input_path.unlink(missing_ok=True)

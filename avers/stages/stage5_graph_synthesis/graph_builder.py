@@ -114,6 +114,8 @@ class GraphBuilder:
         junction_tolerance: float = 2.0,
         gap_image: Optional[np.ndarray] = None,
         max_supported_gap: int = 60,
+        stroke_px: float = 2.0,
+        junction_points: Optional[set] = None,
     ):
         """
         Initialize graph builder.
@@ -136,6 +138,10 @@ class GraphBuilder:
         self.junction_tolerance = junction_tolerance
         self.gap_image = gap_image
         self.max_supported_gap = max_supported_gap
+        # line width (px) for crossing checks; explicit junction dots (ГОСТ
+        # 2.721) are always joins, even where the strokes continue
+        self.stroke_px = stroke_px
+        self.junction_points = set(junction_points or ())
 
         # Graph data structures
         self.graph = nx.MultiGraph()
@@ -459,9 +465,14 @@ class GraphBuilder:
             for gx in range(x0, x1 + 1):
                 for gy in range(y0, y1 + 1):
                     leg_grid.setdefault((gx, gy), []).append(key)
+        gray = None
+        if self.gap_image is not None:
+            gray = (cv2.cvtColor(self.gap_image, cv2.COLOR_RGB2GRAY)
+                    if self.gap_image.ndim == 3 else self.gap_image)
         for seg_id, seg in segments:
             for raw in (seg.start, seg.end):
                 point = canonical[raw]
+                other_end = seg.end if raw == seg.start else seg.start
                 nearby = sorted(set(leg_grid.get(
                     (int(point[0] // leg_cell), int(point[1] // leg_cell)), ())))
                 for other_id, index in nearby:
@@ -470,6 +481,11 @@ class GraphBuilder:
                         continue
                     t, target, distance = self._project(point, a, b)
                     if distance > self.junction_tolerance:
+                        continue
+                    if (gray is not None and not any(
+                            hypot(point[0] - j[0], point[1] - j[1]) <= self.junction_tolerance + 1
+                            for j in self.junction_points)
+                            and self._is_crossing(point, other_end, a, b, gray)):
                         continue
                     # A rounded projection at a leg end must use its existing node.
                     if t == 0.0:
@@ -505,6 +521,35 @@ class GraphBuilder:
 
         self._detect_junctions()
         return self.graph
+
+    def _is_crossing(self, point, other_end, a, b, gray: np.ndarray) -> bool:
+        """An endpoint lying on a roughly perpendicular wire is a T-joint only
+        if the stroke stops there. If the ink keeps going in the segment's
+        direction beyond the other wire, Hough merely broke a crossing line at
+        the intersection (ГОСТ: crossing without a dot = no connection)."""
+        dx, dy = point[0] - other_end[0], point[1] - other_end[1]
+        n = hypot(dx, dy)
+        lx, ly = b[0] - a[0], b[1] - a[1]
+        ln = hypot(lx, ly)
+        if n < 1 or ln < 1:
+            return False
+        ux, uy = dx / n, dy / n
+        if abs(ux * lx / ln + uy * ly / ln) > 0.7:  # collinear: fragments of one wire
+            return False
+        s = max(1.0, float(self.stroke_px))
+        start = self.junction_tolerance + 1.5 * s
+        stop = start + max(6.0, 2.5 * s)
+        height, width = gray.shape[:2]
+        r = max(1, int(round(s / 2)))
+        hits = total = 0
+        for d in np.arange(start, stop, 1.0):
+            x = int(round(point[0] + ux * d))
+            y = int(round(point[1] + uy * d))
+            if not (0 <= x < width and 0 <= y < height):
+                return False
+            total += 1
+            hits += bool(np.any(gray[max(0, y - r):y + r + 1, max(0, x - r):x + r + 1] < 128))
+        return total > 0 and hits / total >= 0.85
 
     def _detect_junctions(self) -> List[Tuple[int, int, str]]:
         """Label connected wire nodes with three or more incident wire legs."""

@@ -352,8 +352,11 @@ class SchematicOCR:
 
     def _easyocr_recognize(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """EasyOCR recognition."""
+        # EasyOCR shrinks images to canvas_size (2560 px) by default, which
+        # makes the labels of a large sheet unreadable; keep up to 4096 px.
+        canvas = int(min(4096, max(2560, max(image.shape[:2]))))
         with _EASYOCR_LOCK:  # the cached reader is shared between requests
-            results = self._ocr.readtext(image)
+            results = self._ocr.readtext(image, canvas_size=canvas)
         
         texts = []
         for bbox, text, confidence in results:
@@ -529,20 +532,37 @@ class WireVectorizer:
         else:
             gray = image.copy()
         
+        # Global (Otsu) ink mask first: it gives the stroke width, which sets
+        # every pixel tolerance below (a 4800 px sheet has 3x thicker lines
+        # than a 1600 px one; fixed 11 px windows made thick lines hollow).
+        otsu_t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        dark = gray < min(255, otsu_t + 20)
+        bimodal = 0.0 < dark.mean() < 0.35
+        stroke = self._stroke_width(dark.astype(np.uint8)) if bimodal else 2.0
+        stroke = float(np.clip(stroke if np.isfinite(stroke) else 2.0, 1.0, 20.0))
+        self.last_stroke = stroke
+        block = max(11, int(6 * stroke) | 1)
+        
         # Threshold
         thresh = cv2.adaptiveThreshold(
             gray, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY_INV,
-            blockSize=11, C=2,
+            blockSize=block, C=2,
         )
-        # The local threshold alone turns paper grain / sensor noise into ink.
-        # Keep only pixels that are also dark globally (Otsu, with a margin),
-        # unless the page is not bimodal at all (then Otsu is meaningless).
-        otsu_t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-        dark = gray < min(255, otsu_t + 20)
-        if 0.0 < dark.mean() < 0.35:
-            thresh[~dark] = 0
+        # On a bimodal page (drawing / ordinary scan) the global Otsu mask IS
+        # the ink: the local threshold hollows dark areas wider than its
+        # window (crossings and junctions of thick lines became holes, cutting
+        # wires exactly at intersections) and turns paper grain into ink.
+        # The local threshold is kept only for unevenly lit, non-bimodal pages.
+        self.last_note = None
+        if not bimodal and (thresh > 0).mean() > 0.35:
+            # Photo / noise, not a line drawing: Hough would produce thousands
+            # of random "wires" (minutes of work, meaningless netlist).
+            self.last_note = "Изображение не похоже на штриховой чертёж: провода не векторизованы"
+            return [], set()
+        if bimodal:
+            thresh = np.where(dark, 255, 0).astype(np.uint8)
             # remove speckles much smaller than any wire piece
             n, labels, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
             small = np.flatnonzero(stats[1:, cv2.CC_STAT_AREA] < 12) + 1
@@ -597,6 +617,16 @@ class WireVectorizer:
         # original (pre-Hough) skeleton for repeated gaps, but only near the
         # page margins: a broken wire in the circuit interior is ambiguous.
         support = cv2.dilate(skeleton, kernel) if lines is not None else None
+        # Extension follows the ink mask, not the skeleton: at a crossing of
+        # thick lines the skeleton bends into two Y-joints, an extension along
+        # it stopped exactly on the crossing and produced a false T-joint
+        # (two nets merged). The ink mask is continuous through crossings.
+        ink_support = thresh if lines is not None else None
+        # Extend to the true end of the stroke (no length cap): Hough cuts a
+        # thick line into dozens of overlapping pieces, and a capped extension
+        # left some of them ending at a crossing by chance -> false T-joint.
+        # Fully extended pieces of one wire coincide and are de-duplicated.
+        max_ext = int(max(gray.shape[:2])) if bimodal else int(max(40, 12 * stroke))
         height, width = gray.shape[:2]
         segments = []
         junctions = set()
@@ -631,8 +661,8 @@ class WireVectorizer:
                 # and the erased component bboxes. Extend both ends while the
                 # original skeleton continues in the same direction.
                 (x1, y1), (x2, y2) = (
-                    self._extend_along_ink((x2, y2), (x1, y1), support),
-                    self._extend_along_ink((x1, y1), (x2, y2), support),
+                    self._extend_along_ink((x2, y2), (x1, y1), ink_support, max_ext),
+                    self._extend_along_ink((x1, y1), (x2, y2), ink_support, max_ext),
                 )
 
                 # RDP simplification (single segment = no simplification needed)
@@ -645,7 +675,8 @@ class WireVectorizer:
                 ))
 
         segments = self._drop_contained(segments)
-        segments = self._drop_isolated_short(segments, exclusion_bboxes or [])
+        segments = self._drop_isolated_short(
+            segments, exclusion_bboxes or [], short=max(50.0, 12.0 * stroke), tol=max(4.0, 1.5 * stroke))
         for seg in segments:
             # Track endpoints as potential junctions
             junctions.add(seg.start)
@@ -895,6 +926,8 @@ class ProductionPipeline:
             segments = []
             junctions = set()
         
+        if getattr(self, "_vectorizer_note", None):
+            result.warnings.append(self._vectorizer_note)
         result.stage_timings["vectorization"] = time.time() - stage_start
         
         # Stage 4: Graph synthesis
@@ -1294,7 +1327,20 @@ class ProductionPipeline:
             exclusion_padding=self.config.vectorization.snap_radius,
         )
         
-        return vectorizer.vectorize(image, exclusion_bboxes, text_bboxes=text_bboxes)
+        out = vectorizer.vectorize(image, exclusion_bboxes, text_bboxes=text_bboxes)
+        self._stroke = getattr(vectorizer, "last_stroke", 2.0)
+        self._vectorizer_note = getattr(vectorizer, "last_note", None)
+        return out
+    
+    def _scaled_tolerances(self) -> Tuple[int, float]:
+        """Snap radius / junction tolerance grown with the line width: skeleton
+        ends retreat ~half a stroke from corners and erased bboxes, so fixed
+        pixel values broke every net on large (thick-line) sheets."""
+        stroke = float(getattr(self, "_stroke", 2.0) or 2.0)
+        gs = self.config.graph_synthesis
+        snap = int(round(gs.snap_radius + max(0.0, 2.0 * (stroke - 2.5))))
+        junction = max(gs.junction_tolerance, 1.5 * stroke)
+        return snap, junction
     
     def _run_graph_synthesis(
         self,
@@ -1304,15 +1350,19 @@ class ProductionPipeline:
         image: Optional[np.ndarray] = None,
     ) -> List[Net]:
         """Run graph synthesis, verifying longer wire gaps against source pixels."""
+        snap_radius, junction_tolerance = self._scaled_tolerances()
         builder = GraphBuilder(
             snap_enabled=self.config.graph_synthesis.snap_enabled,
-            snap_radius=self.config.graph_synthesis.snap_radius,
+            snap_radius=snap_radius,
             merge_collinear=self.config.graph_synthesis.merge_collinear_segments,
             gap_image=image,
             max_supported_gap=self.config.graph_synthesis.max_supported_gap,
             # Hough segment ends at a skeleton corner/T are typically 2-5 px
             # apart; 2 px left most L-corners of real drawings disconnected.
-            junction_tolerance=self.config.graph_synthesis.junction_tolerance,
+            junction_tolerance=junction_tolerance,
+            stroke_px=float(getattr(self, "_stroke", 2.0) or 2.0),
+            junction_points={tuple(p.coord) for c in components
+                             if c.type == ComponentType.JUNCTION_DOT for p in c.pins},
         )
         
         # Add segments

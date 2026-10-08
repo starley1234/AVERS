@@ -238,4 +238,9 @@ def connector_pin_labels(
             if best[0] <= 0.5 * cell:
                 mapping[name] = best[1]
                 taken.add(best[1])
+    # Partial reads must not create duplicate contact names: two cells with
+    # the same name would be merged into one node of the netlist graph.
+    final = [mapping.get(name, name) for name in pin_coords]
+    if len(set(final)) != len(final):
+        return {}
     return mapping

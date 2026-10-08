@@ -56,6 +56,9 @@ def test_connector_pin_numbers_from_cells():
     texts = [_t("3", 118, 113, 12, 14), _t("7", 118, 153, 12, 14),
              _t("8", 118, 193, 12, 14), _t("9", 118, 233, 12, 14)]
     assert connector_pin_labels(bbox, coords, texts) == {"1": "3", "2": "7", "3": "8", "4": "9"}
+    # partial read that would duplicate a name ("3" read in cell 1, cell 3 unread) -> ignored
+    partial = [_t("3", 118, 113, 12, 14), _t("2", 118, 153, 12, 14)]
+    assert connector_pin_labels(bbox, coords, partial) == {}
 
 
 def _demo_labels(truth):

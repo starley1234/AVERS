@@ -1,5 +1,8 @@
 ﻿# AGENTS.md — инструкция для коддинг-агентов, работающих в этом репозитории
 
+**НОВАЯ СЕССИЯ: сначала прочитайте docs/HANDOFF.md** (состояние прототипа, что не протестировано, план по приоритетам). Windows: start.cmd/stop.cmd, окружение env\\, тесты env\\Scripts\\python.exe -m pytest tests -q (248 passed).
+
+
 Этот файл — чтобы следующий агент (или вы сами на другой машине) не тратил
 токены/время на то, что уже выяснено. Прочитайте его целиком перед тем, как
 что-то менять.
@@ -50,7 +53,7 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt            # core deps, ~30 сек, работает без GPU/интернета к ML-хабам
-python -m pytest tests/ -q                 # должно быть "~238 passed" (на момент этой правки; тест с EasyOCR пропускается, если он не установлен) без единой ML-библиотеки
+python -m pytest tests/ -q                 # должно быть "~248 passed" (на момент этой правки; тест с EasyOCR пропускается, если он не установлен) без единой ML-библиотеки
 ```
 
 Это баз для 95% задач (web UI, dataset tools, active learning логика, графы,
@@ -138,7 +141,7 @@ config.yaml        # полный конфиг со всеми секциями,
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/ -q          # ~238 passed, 0 failed (без ML extras), ~60-100 сек
+python -m pytest tests/ -q          # ~248 passed, 0 failed (без ML extras), ~60-100 сек
 ruff check avers/ --select E9,F821,F823,F811  # реальные баги (не стиль) — должно быть "All checks passed!"
 python -m avers active-learning stats                       # CLI работает
 python -c "from avers.web.app import create_app; create_app()"  # web app собирается
