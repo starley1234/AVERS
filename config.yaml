@@ -18,7 +18,7 @@ slicing:
 
 # Stage 2: Object Detection (RT-DETR/YOLO)
 detection:
-  model_path: null             # Path to trained weights (null = no component classification)
+  model_path: null             # Обученные веса AVERS (ultralytics .pt, классы = библиотека ГОСТ УГО); null = шаблоны
   model_type: yolo              # 'yolo' or 'rtdetr'
   model_name: yolov11x
   confidence_threshold: 0.25
@@ -31,6 +31,9 @@ detection:
   template_fallback: true
   template_min_score: 0.62
   template_px_per_mm: null      # масштаб чертежа px/мм; null = оценить автоматически
+  # С обученными весами (model_path или текущая версия реестра active learning):
+  use_registry: true            # model_path пуст -> веса текущей версии из active_learning.registry_dir
+  merge_templates: true         # добавлять УГО, найденные шаблонами, но пропущенные моделью
 
 # Stage 3: OCR (PaddleOCR)
 ocr:

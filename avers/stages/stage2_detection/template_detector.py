@@ -711,3 +711,102 @@ class GOSTTemplateDetector:
             f"(scale={self.last_info.get('px_per_mm', 'n/a')} px/mm, stroke={stroke / f:.1f}px)"
         )
         return detections
+
+    # ------------------------------------------------------------ hybrid mode
+    def refine(self, image: np.ndarray, detections: List[Dict]) -> List[Dict]:
+        """Гибридный режим: уточнить детекции обученной модели по геометрии ГОСТ.
+
+        Модель отвечает за «где и что» (класс + рамка), шаблон того же класса
+        ищется только в окрестности рамки и даёт поворот, зеркальность, точную
+        рамку и координаты выводов. Пороги мягче, чем в detect(): класс уже
+        подтверждён моделью. Если шаблон не нашёлся, выводы раскладываются по
+        геометрии УГО из рамки (поворот по соотношению сторон).
+        """
+        if not detections:
+            return []
+        ink_full = self._binarize(image)
+        H, W = ink_full.shape
+        stroke = self._stroke_width(ink_full) if ink_full.any() else 2.0
+        relaxed = GOSTTemplateDetector(
+            symbols=self.symbols, min_ncc=0.3, min_coverage=0.7, max_extra=0.6, max_ring=0.5,
+        )
+        by_name = {s.class_name: s for s in GOST_SYMBOLS.values()}
+        out: List[Dict] = []
+        for det in detections:
+            det = dict(det)
+            name = det["category"]
+            sym = by_name.get(name)
+            x0, y0, x1, y1 = (int(v) for v in det["bbox"])
+            bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+            pad = int(max(10, 0.35 * max(bw, bh)))
+            cx0, cy0 = max(0, x0 - pad), max(0, y0 - pad)
+            cx1, cy1 = min(W, x1 + pad), min(H, y1 + pad)
+            crop = ink_full[cy0:cy1, cx0:cx1]
+
+            if name == "junction_dot":
+                det.setdefault("pins", [])
+                det.setdefault("exclude_from_wires", False)
+                det["pins_source"] = "dot"
+                out.append(det)
+                continue
+            if name == "connector_body":
+                tables = self._detect_connector_tables(crop, stroke, []) if crop.size else []
+                if tables:
+                    t = max(tables, key=lambda t: t["cells"])
+                    tx0, ty0, tx1, ty1 = t["box"]
+                    det["bbox"] = (tx0 + cx0, ty0 + cy0, tx1 + cx0, ty1 + cy0)
+                    det["pins"] = [{"name": n, "coord": (px + cx0, py + cy0)} for n, (px, py) in t["pins"]]
+                    det["pins_source"] = "table"
+                else:
+                    det.setdefault("pins", [])
+                    det["pins_source"] = "none"
+                out.append(det)
+                continue
+            if sym is None or not sym.draw_fn or not sym.pins:
+                det.setdefault("pins", [])
+                det["pins_source"] = "none"
+                out.append(det)
+                continue
+
+            best = None
+            if crop.size and crop.any():
+                img = relaxed._prepare(crop)
+                img.stroke = stroke
+                w_mm, h_mm = sym.size_mm
+                templates = []
+                for mirror in ((False, True) if sym.chiral else (False,)):
+                    for rot in range(4):
+                        tw_mm, th_mm = (w_mm, h_mm) if rot % 2 == 0 else (h_mm, w_mm)
+                        base = float(np.sqrt((bw / tw_mm) * (bh / th_mm)))
+                        for mult in (0.85, 0.93, 1.0, 1.08, 1.17):
+                            t = relaxed._render(sym, base * mult, stroke, rot, mirror)
+                            if t is not None and t.shape[0] < crop.shape[0] and t.shape[1] < crop.shape[1]:
+                                templates.append(t)
+                cands = relaxed._match_all(img, templates, max_peaks=20)
+                if cands:
+                    best = max(cands, key=lambda c: c.score)
+            if best is not None:
+                bx0, by0 = best.x + cx0, best.y + cy0
+                th, tw = best.tmpl.shape
+                det["bbox"] = (bx0, by0, min(W - 1, bx0 + tw), min(H - 1, by0 + th))
+                det["pins"] = [{"name": n, "coord": (min(W - 1, bx0 + px), min(H - 1, by0 + py))}
+                               for n, (px, py) in best.tmpl.pins]
+                det["rotation"] = 90 * best.tmpl.rotation
+                det["mirrored"] = best.tmpl.mirror
+                det["template_score"] = round(best.score, 3)
+                det["pins_source"] = "template"
+            else:
+                # Геометрия ГОСТ без проверки по пикселям: поворот 0/90 по рамке.
+                w_mm, h_mm = sym.size_mm
+                vertical = (bh > bw) != (h_mm > w_mm)
+                pins = []
+                for n, px_mm, py_mm in sym.pins:
+                    fx, fy = px_mm / w_mm, py_mm / h_mm
+                    if vertical:  # поворот на 90° против часовой: (x, y) -> (y, 1 - x)
+                        fx, fy = fy, 1.0 - fx
+                    pins.append({"name": n, "coord": (int(round(x0 + fx * bw)), int(round(y0 + fy * bh)))})
+                det["pins"] = pins
+                det["rotation"] = 90 if vertical else 0
+                det["pins_source"] = "geometry"
+            out.append(det)
+        return out

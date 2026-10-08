@@ -30,7 +30,12 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
   С установленным EasyOCR (`pip install easyocr`) позиционные обозначения
   (R1, VD1, K1.1) берутся со схемы (`avers/core/designators.py`), и на демо
   читаются все 14 из 14. Без EasyOCR тест с OCR пропускается; подставной тест
-  OCR работает всегда. Windows: `start.cmd` / `stop.cmd`. Новые классы
+  OCR работает всегда. Windows: `start.cmd` / `stop.cmd`.
+  Обученные веса подключаются через ultralytics с нарезкой на тайлы и
+  гибридным уточнением выводов по шаблонам ГОСТ (`model_detector.py`, раздел в
+  том же doc). SAHI больше не используется. **ultralytics ставить только
+  `--no-deps`**, иначе он притянет `opencv-python` (см. ловушку opencv ниже).
+  Новые классы
   добавляйте в `GOST_SYMBOLS` и зеркально в `avers/core/types.py::DETECTION_CLASSES`
   (это проверяет тест).
 - Каталог реальных (не синтетических) референсных схем для обучения:

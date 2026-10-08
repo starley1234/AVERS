@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict, Any, Union, Callable
 from pathlib import Path
 import time
+import threading
 import logging
 
 import numpy as np
@@ -58,11 +59,22 @@ def get_sahi_integration() -> Optional[Any]:
         return None
 
 
+_DETECTOR_CACHE: Dict[Tuple, "SlicedDetector"] = {}
+_DETECTOR_LOCK = threading.Lock()
+
+
 class SlicedDetector:
     """
-    SAHI-based sliced detection with safe fallback.
-    
-    Without trained weights, returns no component classes instead of guessing.
+    УГО detection: trained weights (ultralytics, tiled) with GOST refinement,
+    or the CPU template detector, or nothing - never silently.
+
+    * ``model_path`` set and loadable -> backend ``"model"``: YOLO/RT-DETR boxes
+      on overlapping tiles, then ``GOSTTemplateDetector.refine`` derives the
+      rotation and pin coordinates (hybrid). With ``merge_templates`` the
+      template detector's own finds that the model missed are added.
+    * no weights (or they cannot be loaded) -> ``"gost_templates"`` if
+      ``template_fallback`` else ``"unavailable"``. Why the weights were not
+      used is kept in ``load_error`` and reported by the pipeline.
     """
     
     def __init__(
@@ -76,68 +88,65 @@ class SlicedDetector:
         template_fallback: bool = False,
         template_min_score: float = 0.62,
         template_px_per_mm: Optional[float] = None,
+        merge_templates: bool = True,
+        iou_threshold: float = 0.5,
+        model: Any = None,
     ):
         self.template_fallback = template_fallback
         self.template_min_score = template_min_score
         self.template_px_per_mm = template_px_per_mm
+        self.merge_templates = merge_templates
         self._template = None
         self.model_path = model_path
         self.model_type = model_type
         self.confidence_threshold = confidence_threshold
+        self.iou_threshold = iou_threshold
         self.device = device
         self.slice_size = slice_size
         self.overlap_ratio = overlap_ratio
         
-        self._sahi = get_sahi_integration()
         self._model = None
+        self._injected_model = model  # tests / custom predictors
         self._loaded = False
         self.backend = "uninitialized"
+        self.load_error: Optional[str] = None
+        self.last_stats: Dict[str, Any] = {}
     
     def load(self) -> bool:
         """Load detection model."""
         if self._loaded:
             return True
         
-        if not self.model_path:
+        if not self.model_path and self._injected_model is None:
             return self._load_fallback_model()
 
         try:
-            if self._sahi is not None:
-                return self._load_sahi_model()
-            return self._load_fallback_model()
+            return self._load_ultralytics_model()
+        except ImportError:
+            self.load_error = ("веса указаны, но пакет ultralytics не установлен "
+                               "(pip install ultralytics)")
         except Exception as e:
-            logger.warning(f"Failed to load SAHI model: {e}, skipping detection")
-            return self._load_fallback_model()
+            self.load_error = f"не удалось загрузить веса {self.model_path}: {e}"
+        logger.warning(f"Trained detector not used: {self.load_error}")
+        return self._load_fallback_model()
     
-    def _load_sahi_model(self) -> bool:
-        """Load SAHI with detection model."""
-        from sahi import AutoDetectionModel
-        
-        # Determine model type
-        if self.model_type.startswith("yolo"):
-            model_type = "yolov11" if "11" in self.model_type else "yolov8"
-        elif self.model_type == "rtdetr":
-            model_type = "rtdetr"
-        else:
-            model_type = "yolov8"
-        
-        self._model = AutoDetectionModel.from_pretrained(
-            model_type=model_type,
-            model_path=self.model_path,
+    def _load_ultralytics_model(self) -> bool:
+        from avers.stages.stage2_detection.model_detector import UltralyticsTiledDetector
+        self._model = UltralyticsTiledDetector(
+            model_path=self.model_path or "<injected>",
             confidence_threshold=self.confidence_threshold,
+            iou_threshold=self.iou_threshold,
             device=self.device,
+            tile_size=self.slice_size,
+            overlap_ratio=self.overlap_ratio,
+            model=self._injected_model,
+        ).load()
+        from avers.stages.stage2_detection.template_detector import GOSTTemplateDetector
+        self._template = GOSTTemplateDetector(
+            min_score=self.template_min_score, px_per_mm=self.template_px_per_mm,
         )
-        
-        self._sliced_inference = self._sahi["SlicingInference"](
-            detection_model=self._model,
-            slice_size=self.slice_size,
-            overlap_height_ratio=self.overlap_ratio,
-            overlap_width_ratio=self.overlap_ratio,
-        )
-        
         self._loaded = True
-        self.backend = "sahi"
-        logger.info(f"SAHI model loaded: {self.model_type}")
+        self.backend = "model"
         return True
     
     def _load_fallback_model(self) -> bool:
@@ -169,27 +178,29 @@ class SlicedDetector:
         if not self._loaded:
             self.load()
         
-        if self.backend == "sahi":
-            return self._sahi_detect(image)
+        if self.backend == "model" and self._model is not None:
+            return self._model_detect(image)
         if self.backend == "gost_templates" and self._template is not None:
             return self._template.detect(image)
         return self._fallback_detect(image)
     
-    def _sahi_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
-        """SAHI detection."""
-        result = self._sliced_inference.detect(image)
-        
-        detections = []
-        for obj in result.object_list:
-            bbox = obj.bbox
-            detections.append({
-                "bbox": (int(bbox.minx), int(bbox.miny), int(bbox.maxx), int(bbox.maxy)),
-                "confidence": float(obj.category.confidence),
-                "category": obj.category.name,
-                "category_id": obj.category.id,
-            })
-        
-        return detections
+    def _model_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
+        """Hybrid: model boxes -> GOST refinement (rotation, pins) [+ template finds]."""
+        from avers.stages.stage2_detection.model_detector import merge_detections
+        raw = self._model.detect(image)
+        refined = self._template.refine(image, raw)
+        added: List[Dict[str, Any]] = []
+        if self.merge_templates:
+            merged = merge_detections(refined, self._template.detect(image))
+            added = merged[len(refined):]
+            refined = merged
+        sources: Dict[str, int] = {}
+        for d in refined:
+            key = d.get("pins_source") or d.get("source", "?")
+            sources[key] = sources.get(key, 0) + 1
+        self.last_stats = {"model": len(raw), "added_by_templates": len(added), "by_source": sources}
+        logger.info(f"Hybrid detection: {self.last_stats}")
+        return refined
     
     def _fallback_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """Do not invent component classes when a trained model is unavailable."""
@@ -199,8 +210,6 @@ class SlicedDetector:
 # =============================================================================
 # OCR Integration
 # =============================================================================
-
-import threading
 
 _EASYOCR_READERS: Dict[Tuple[str, ...], Any] = {}
 _EASYOCR_LOCK = threading.Lock()
@@ -827,14 +836,26 @@ class ProductionPipeline:
         try:
             detections, component_bboxes, backend = self._run_detection(image)
             result.manifest.components = self._group_components(detections)
+            detector = getattr(self, "_last_detector", None)
+            load_error = getattr(detector, "load_error", None)
+            if load_error:
+                result.warnings.append(f"Обученный детектор не используется: {load_error}")
             if backend == "gost_templates":
                 result.warnings.append(
                     "Детекция УГО: обученных весов нет, применён шаблонный детектор по библиотеке "
                     "ГОСТ УГО (CPU). Надёжен для чистых схем по ЕСКД; классы и обозначения "
                     "проверьте в валидаторе"
                 )
-            elif backend != "sahi":
-                result.warnings.append("Детекция УГО недоступна: нет обученных весов или SAHI; классы не определены")
+            elif backend == "model":
+                stats = getattr(detector, "last_stats", {}) or {}
+                geometry = stats.get("by_source", {}).get("geometry", 0)
+                if geometry:
+                    result.warnings.append(
+                        f"Детекция УГО (обученная модель): у {geometry} УГО выводы определены "
+                        f"только по рамке (шаблон ГОСТ не подтвердил) - проверьте их подключения"
+                    )
+            else:
+                result.warnings.append("Детекция УГО недоступна: нет обученных весов; классы не определены")
         except Exception as e:
             result.errors.append(f"Detection failed: {e}")
             result.warnings.append("Using empty components")
@@ -915,21 +936,64 @@ class ProductionPipeline:
         
         return result
     
+    def _resolve_model_path(self) -> Tuple[Optional[str], str]:
+        """Weights to use: explicit ``detection.model_path``, else the current
+        version of the active-learning registry (so promote/rollback actually
+        switch the production detector), else none."""
+        det_cfg = self.config.detection
+        if det_cfg.model_path:
+            return det_cfg.model_path, "config"
+        al = getattr(self.config, "active_learning", None)
+        if not getattr(det_cfg, "use_registry", True) or al is None:
+            return None, "none"
+        index = Path(al.registry_dir) / "registry.json"
+        if not index.is_file():  # do not create registry dirs as a side effect
+            return None, "none"
+        try:
+            from avers.active_learning.registry import ModelRegistry
+            current = ModelRegistry(Path(al.registry_dir)).get_current()
+        except Exception as e:
+            logger.warning(f"Model registry unreadable: {e}")
+            return None, "none"
+        if current and Path(current.weights_path).is_file():
+            return current.weights_path, f"registry {current.version_id}"
+        return None, "none"
+
     def _run_detection(
         self, image: np.ndarray
     ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]], bool]:
         """Run component detection."""
-        detector = SlicedDetector(
-            model_path=self.config.detection.model_path,
-            model_type=self.config.detection.model_type,
-            confidence_threshold=self.config.detection.confidence_threshold,
-            device=self.config.detection.device,
+        det_cfg = self.config.detection
+        model_path, self._model_source = self._resolve_model_path()
+        kwargs = dict(
+            model_path=model_path,
+            model_type=det_cfg.model_type,
+            confidence_threshold=det_cfg.confidence_threshold,
+            device=det_cfg.device,
             slice_size=self.config.slicing.tile_size,
             overlap_ratio=self.config.slicing.overlap_ratio,
-            template_fallback=getattr(self.config.detection, "template_fallback", True),
-            template_min_score=getattr(self.config.detection, "template_min_score", 0.62),
-            template_px_per_mm=getattr(self.config.detection, "template_px_per_mm", None),
+            template_fallback=getattr(det_cfg, "template_fallback", True),
+            template_min_score=getattr(det_cfg, "template_min_score", 0.62),
+            template_px_per_mm=getattr(det_cfg, "template_px_per_mm", None),
+            merge_templates=getattr(det_cfg, "merge_templates", True),
+            iou_threshold=det_cfg.iou_threshold,
         )
+        # Loading weights takes seconds; keep one detector per configuration.
+        key = tuple(sorted((k, str(v)) for k, v in kwargs.items()))
+        if model_path:
+            try:
+                key += (("mtime", str(Path(model_path).stat().st_mtime)),)
+            except OSError:
+                pass
+        with _DETECTOR_LOCK:
+            detector = _DETECTOR_CACHE.get(key)
+            if detector is None:
+                detector = SlicedDetector(**kwargs)
+                detector.load()
+                if model_path:
+                    _DETECTOR_CACHE.clear()
+                    _DETECTOR_CACHE[key] = detector
+        self._last_detector = detector
         
         detections = detector.detect(image)
         # Точки соединения - часть провода: их нельзя вырезать из векторизации.

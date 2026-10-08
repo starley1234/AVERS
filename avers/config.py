@@ -34,6 +34,15 @@ class DetectionConfig(BaseModel):
         default=0.62, ge=0.0, le=1.0,
         description="Minimum combined score of the GOST template detector",
     )
+    use_registry: bool = Field(
+        default=True,
+        description="If model_path is empty, use the current (promoted) version from the "
+                    "active-learning model registry (active_learning.registry_dir)",
+    )
+    merge_templates: bool = Field(
+        default=True,
+        description="With trained weights: also add GOST template detections the model missed",
+    )
     template_px_per_mm: Optional[float] = Field(
         default=None,
         description="Drawing scale in px/mm for the template detector (None = auto-estimate)",
