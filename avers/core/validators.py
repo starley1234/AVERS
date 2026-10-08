@@ -200,6 +200,30 @@ class SlicedDetector:
 # OCR Integration
 # =============================================================================
 
+import threading
+
+_EASYOCR_READERS: Dict[Tuple[str, ...], Any] = {}
+_EASYOCR_LOCK = threading.Lock()
+
+
+def _get_easyocr_reader(langs: Tuple[str, ...]):
+    """Process-wide EasyOCR reader (first call downloads/loads the models)."""
+    with _EASYOCR_LOCK:
+        reader = _EASYOCR_READERS.get(langs)
+        if reader is None:
+            import easyocr
+            try:
+                import torch
+                gpu = bool(torch.cuda.is_available())
+            except Exception:
+                gpu = False
+            logger.info(f"Loading EasyOCR {list(langs)} ({'GPU' if gpu else 'CPU'})...")
+            reader = easyocr.Reader(list(langs), gpu=gpu, verbose=False)
+            _EASYOCR_READERS[langs] = reader
+            logger.info("EasyOCR loaded")
+        return reader
+
+
 class SchematicOCR:
     """
     OCR engine with automatic backend selection.
@@ -224,7 +248,7 @@ class SchematicOCR:
         if self._loaded:
             return True
         
-        # Try PaddleOCR
+        # Try PaddleOCR (API 2.x; 3.x changed the constructor -> fall through)
         try:
             from paddleocr import PaddleOCR
             self._ocr = PaddleOCR(
@@ -238,17 +262,20 @@ class SchematicOCR:
             return True
         except ImportError:
             pass
+        except Exception as e:
+            logger.warning(f"PaddleOCR installed but failed to load ({e}); trying EasyOCR")
         
-        # Try EasyOCR
+        # Try EasyOCR. The reader (~100 MB of weights) is cached per process:
+        # the pipeline creates a new SchematicOCR for every request.
         try:
-            import easyocr
-            self._ocr = easyocr.Reader([self.lang, 'en'], gpu=False, verbose=False)
+            self._ocr = _get_easyocr_reader((self.lang, "en"))
             self._backend = "easyocr"
             self._loaded = True
-            logger.info("EasyOCR loaded")
             return True
         except ImportError:
             pass
+        except Exception as e:
+            logger.warning(f"EasyOCR failed to load ({e}); text recognition skipped")
         
         # No OCR backend: do not fabricate designators from contour sizes.
         self._backend = "unavailable"
@@ -288,7 +315,7 @@ class SchematicOCR:
                 text = line[1][0]
                 confidence = float(line[1][1])
                 
-                if confidence < self.confidence_threshold:
+                if not self._keep(text, confidence):
                     continue
                 
                 x_coords = [p[0] for p in points]
@@ -303,13 +330,25 @@ class SchematicOCR:
         
         return texts
     
+    def _keep(self, text: str, confidence: float) -> bool:
+        """Main threshold for free text; short designators / pin numbers get
+        lower scores from OCR models, so they pass from 0.25 (they are later
+        validated by the ГОСТ 2.710 pattern and by geometry)."""
+        if confidence >= self.confidence_threshold:
+            return True
+        from avers.core.designators import normalize_designator
+        short = text.strip()
+        return confidence >= 0.25 and (normalize_designator(short) is not None
+                                       or (short.isdigit() and len(short) <= 3))
+
     def _easyocr_recognize(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """EasyOCR recognition."""
-        results = self._ocr.readtext(image)
+        with _EASYOCR_LOCK:  # the cached reader is shared between requests
+            results = self._ocr.readtext(image)
         
         texts = []
         for bbox, text, confidence in results:
-            if confidence < self.confidence_threshold:
+            if not self._keep(text, float(confidence)):
                 continue
             
             x_coords = [p[0] for p in bbox]
@@ -324,6 +363,61 @@ class SchematicOCR:
         
         return texts
     
+    DESIGNATOR_CHARS = "ABCDEFGHKLMPQRSTUVWXYZ0123456789."
+
+    def recognize_region(
+        self,
+        image: np.ndarray,
+        bbox: Tuple[int, int, int, int],
+        blank: Optional[Tuple[int, int, int, int]] = None,
+        scale: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """Second-pass OCR of a small region (e.g. around one УГО).
+
+        Text detectors miss short labels like "R1" sitting next to lines. Here
+        the region is cleaned (the symbol itself and long wires are painted
+        white), upscaled and read with a designator-only alphabet.
+        Returned bboxes are in full-image coordinates.
+        """
+        if self._backend != "easyocr":
+            return []
+        h, w = image.shape[:2]
+        x0, y0, x1, y1 = max(0, bbox[0]), max(0, bbox[1]), min(w, bbox[2]), min(h, bbox[3])
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return []
+        crop = image[y0:y1, x0:x1].copy()
+        if blank is not None:
+            bx0, by0 = max(0, blank[0] - x0), max(0, blank[1] - y0)
+            bx1, by1 = min(x1 - x0, blank[2] - x0), min(y1 - y0, blank[3] - y0)
+            if bx1 > bx0 and by1 > by0:
+                crop[by0:by1, bx0:bx1] = 255
+        gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY) if crop.ndim == 3 else crop
+        _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+        length = 25
+        lines = cv2.bitwise_or(
+            cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (length, 1))),
+            cv2.morphologyEx(ink, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, length))),
+        )
+        lines = cv2.dilate(lines, np.ones((3, 3), np.uint8))
+        clean = gray.copy()
+        clean[lines > 0] = 255
+        big = cv2.resize(clean, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        with _EASYOCR_LOCK:
+            results = self._ocr.readtext(big, allowlist=self.DESIGNATOR_CHARS)
+        texts = []
+        for pts, text, confidence in results:
+            if not self._keep(text, float(confidence)):
+                continue
+            xs = [p[0] / scale + x0 for p in pts]
+            ys = [p[1] / scale + y0 for p in pts]
+            texts.append({
+                "text": text.strip(),
+                "bbox": (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))),
+                "confidence": float(confidence),
+                "pass": "region",
+            })
+        return texts
+
     def _unavailable_recognize(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """Return no text instead of invented labels when OCR is unavailable."""
         return []
@@ -382,10 +476,33 @@ class WireVectorizer:
         length = int(morphology.skeletonize(ink).sum())
         return float(ink.sum()) / max(1, length)
 
+    @staticmethod
+    def _erase_text(thresh: np.ndarray, text_bboxes: List[Tuple[int, int, int, int]]) -> None:
+        """In-place: inside text boxes keep only long horizontal/vertical strokes."""
+        height, width = thresh.shape[:2]
+        for x0, y0, x1, y1 in text_bboxes:
+            x0, y0 = max(0, int(x0) - 1), max(0, int(y0) - 1)
+            x1, y1 = min(width, int(x1) + 2), min(height, int(y1) + 2)
+            if x1 <= x0 or y1 <= y0:
+                continue
+            length = int(1.3 * max(y1 - y0, 8)) + 1
+            # crop with context so a wire longer than the box is still "long"
+            cx0, cy0 = max(0, x0 - length), max(0, y0 - length)
+            cx1, cy1 = min(width, x1 + length), min(height, y1 + length)
+            crop = thresh[cy0:cy1, cx0:cx1]
+            horiz = cv2.morphologyEx(crop, cv2.MORPH_OPEN,
+                                     cv2.getStructuringElement(cv2.MORPH_RECT, (length, 1)))
+            vert = cv2.morphologyEx(crop, cv2.MORPH_OPEN,
+                                    cv2.getStructuringElement(cv2.MORPH_RECT, (1, length)))
+            keep = cv2.bitwise_or(horiz, vert)
+            box = (slice(y0 - cy0, y1 - cy0), slice(x0 - cx0, x1 - cx0))
+            thresh[y0:y1, x0:x1] = cv2.bitwise_and(crop[box], keep[box])
+
     def vectorize(
         self,
         image: np.ndarray,
         exclusion_bboxes: Optional[List[Tuple[int, int, int, int]]] = None,
+        text_bboxes: Optional[List[Tuple[int, int, int, int]]] = None,
     ) -> Tuple[List[WireSegment], set]:
         """
         Vectorize wires in image.
@@ -431,6 +548,12 @@ class WireVectorizer:
         # only when the strokes are clearly thicker than the kernel.
         if self._stroke_width(thresh) >= 4.0:
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        
+        # Text labels: erase letters but keep wires running through/along the
+        # (often loose) OCR box. Inside each box only ink belonging to straight
+        # strokes longer than the text height survives.
+        if text_bboxes:
+            self._erase_text(thresh, text_bboxes)
         
         # Apply exclusion mask
         if exclusion_bboxes:
@@ -726,8 +849,9 @@ class ProductionPipeline:
             texts, text_bboxes, ocr_available = self._run_ocr(image)
             if not ocr_available:
                 result.warnings.append("OCR недоступен: маркировки не определены")
-            # Associate texts with components
-            self._associate_texts(result.manifest.components, texts)
+            # Associate texts with components (may add second-pass labels)
+            self._associate_texts(result.manifest.components, texts, image=image)
+            text_bboxes = [t["bbox"] for t in texts]
         except Exception as e:
             result.errors.append(f"OCR failed: {e}")
             result.warnings.append("Text recognition skipped")
@@ -741,7 +865,8 @@ class ProductionPipeline:
         try:
             segments, junctions = self._run_vectorization(
                 image,
-                component_bboxes + text_bboxes
+                component_bboxes,
+                text_bboxes=text_bboxes,
             )
         except Exception as e:
             result.errors.append(f"Vectorization failed: {e}")
@@ -952,6 +1077,7 @@ class ProductionPipeline:
         
         texts = ocr.recognize(image)
         bboxes = [t["bbox"] for t in texts]
+        self._ocr_engine = ocr if ocr._backend not in (None, "unavailable") else None
         
         return texts, bboxes, ocr._backend != "unavailable"
     
@@ -959,9 +1085,17 @@ class ProductionPipeline:
         self,
         components: List[Component],
         texts: List[Dict],
+        image: Optional[np.ndarray] = None,
     ) -> None:
         """Associate texts with nearby components."""
-        if not components or not texts:
+        if not components:
+            return
+        
+        if any("gost_class" in c.text_associations for c in components):
+            if texts or getattr(self, "_ocr_engine", None) is not None:
+                self._apply_ocr_designators(components, texts, image)
+            return
+        if not texts:
             return
         
         from scipy.spatial import KDTree
@@ -979,10 +1113,115 @@ class ProductionPipeline:
             if dist < self.config.graph_synthesis.text_association_radius:
                 components[idx].text_associations["designator"] = text["text"]
     
+    def _ocr_second_pass(self, components: List[Component], texts: List[Dict],
+                         assigned: Dict[int, Dict], image: np.ndarray) -> List[Dict]:
+        """Re-read the neighbourhood of every labelled-class УГО left without a
+        designator (EasyOCR's detector often skips short labels near lines)."""
+        from avers.core.designators import CLASS_PREFIXES
+        engine = getattr(self, "_ocr_engine", None)
+        if engine is None or image is None:
+            return []
+        h, w = image.shape[:2]
+        extra: List[Dict] = []
+        todo = [i for i, c in enumerate(components)
+                if i not in assigned and c.text_associations.get("gost_class") in CLASS_PREFIXES]
+        for i in todo[:40]:
+            x0, y0, x1, y1 = components[i].bbox
+            pad = int(max(45, 0.7 * max(x1 - x0, y1 - y0)))
+            region = (max(0, x0 - pad), max(0, y0 - pad), min(w, x1 + pad), min(h, y1 + pad))
+            try:
+                extra.extend(engine.recognize_region(image, region, blank=components[i].bbox))
+            except Exception as e:  # OCR must never break the pipeline
+                logger.warning(f"Second-pass OCR failed: {e}")
+                break
+        return extra
+
+    def _fix_decimal_points(self, texts: List[Dict], image: Optional[np.ndarray]) -> None:
+        from avers.core.designators import restore_decimal_point
+        if image is None:
+            return
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if image.ndim == 3 else image
+        for t in texts:
+            x0, y0, x1, y1 = (int(v) for v in t["bbox"])
+            crop = gray[max(0, y0):max(0, y1) + 1, max(0, x0):max(0, x1) + 1]
+            if crop.size == 0:
+                continue
+            _, ink = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+            fixed = restore_decimal_point(t["text"], ink > 0)
+            if fixed != t["text"]:
+                t["ocr_raw"] = t["text"]
+                t["text"] = fixed
+
+    def _apply_ocr_designators(self, components: List[Component], texts: List[Dict],
+                               image: Optional[np.ndarray] = None) -> None:
+        """Replace auto designators with ГОСТ 2.710 labels read by OCR.
+
+        A label goes to the nearest УГО whose class admits its letter code
+        (K1.1 -> relay contact, not a lamp), one-to-one. Components left
+        without a label keep an auto designator, renumbered so it never
+        collides with a recognised one. Connector pin numbers are read from
+        the digits printed inside the connector cells.
+        """
+        import re
+        from avers.core.designators import assign_designators, connector_pin_labels
+
+        candidates = [
+            {"bbox": c.bbox, "gost_class": c.text_associations.get("gost_class", "")}
+            for c in components
+        ]
+        radius = self.config.graph_synthesis.text_association_radius
+        self._fix_decimal_points(texts, image)
+        assigned = assign_designators(candidates, texts, max_distance=radius)
+        extra = self._ocr_second_pass(components, texts, assigned, image)
+        if extra:
+            self._fix_decimal_points(extra, image)
+            texts.extend(extra)
+            assigned = assign_designators(candidates, texts, max_distance=radius)
+        taken = {info["designator"] for info in assigned.values()}
+        for idx, info in assigned.items():
+            comp = components[idx]
+            comp.text_associations["auto_designator"] = comp.designator
+            comp.text_associations["designator_source"] = "ocr"
+            comp.text_associations["ocr_text"] = info["text"]
+            comp.text_associations["ocr_confidence"] = f"{info['confidence']:.2f}"
+            comp.designator = info["designator"]
+
+        # Renumber remaining auto designators away from recognised ones.
+        counters: Dict[str, int] = {}
+        for i, comp in enumerate(components):
+            if i in assigned:
+                continue
+            comp.text_associations.setdefault("designator_source", "auto")
+            m = re.match(r"^([A-Z]+)(\d+)$", comp.designator)
+            if not m:
+                continue
+            prefix = m.group(1)
+            n = counters.get(prefix, 0)
+            while True:
+                n += 1
+                if f"{prefix}{n}" not in taken:
+                    break
+            counters[prefix] = n
+            comp.designator = f"{prefix}{n}"
+            taken.add(comp.designator)
+
+        for comp in components:
+            if comp.type != ComponentType.CONNECTOR or not comp.pins:
+                continue
+            coords: Dict[str, List[Tuple[int, int]]] = {}
+            for pin in comp.pins:
+                coords.setdefault(pin.pin_number, []).append(tuple(pin.coord))
+            mapping = connector_pin_labels(comp.bbox, coords, texts)
+            if mapping:
+                for pin in comp.pins:
+                    pin.pin_number = mapping.get(pin.pin_number, pin.pin_number)
+                comp.text_associations["pin_numbers_source"] = "ocr"
+
     def _run_vectorization(
         self,
         image: np.ndarray,
         exclusion_bboxes: List[Tuple[int, int, int, int]],
+        text_bboxes: Optional[List[Tuple[int, int, int, int]]] = None,
     ) -> Tuple[List[WireSegment], set]:
         """Run wire vectorization."""
         vectorizer = WireVectorizer(
@@ -991,7 +1230,7 @@ class ProductionPipeline:
             exclusion_padding=self.config.vectorization.snap_radius,
         )
         
-        return vectorizer.vectorize(image, exclusion_bboxes)
+        return vectorizer.vectorize(image, exclusion_bboxes, text_bboxes=text_bboxes)
     
     def _run_graph_synthesis(
         self,

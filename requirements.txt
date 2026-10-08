@@ -56,7 +56,9 @@ reportlab>=4.0.0  # For creating test PDFs and synthetic PDF export
 # paddleocr>=2.7.0
 # paddlepaddle>=2.5.0
 
-# Alternative OCR
+# Recommended OCR on Windows/CPU (reads ГОСТ 2.710 designators R1, VD1, K1.1):
+#   pip install easyocr      (pulls torch CPU; first run downloads ~100 MB models
+#                             to %USERPROFILE%\.EasyOCR, internet required once)
 # easyocr>=1.7.0
 
 # VLM (Stage 6) - Vision Language Models

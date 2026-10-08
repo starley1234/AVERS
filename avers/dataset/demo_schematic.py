@@ -292,6 +292,16 @@ def evaluate(manifest: Dict, truth: Dict, iou: float = 0.5) -> Dict:
             det_nets.add(refs)
     expected_symbols = [c for c in gt_comps]
     matched_nets = gt_nets & det_nets
+    # Позиционные обозначения (имеют смысл только с OCR): сколько именованных
+    # УГО получили ровно эталонное обозначение (K1.1, R1 ...).
+    det_by_id = {c["id"]: c for c in manifest.get("components", [])}
+    named = [(cid, g) for cid, g in det_to_gt.items() if not g.startswith("_")]
+    designators_correct = sorted(g for cid, g in named if det_by_id[cid].get("designator") == g)
+    designators_wrong = sorted(f"{g}->{det_by_id[cid].get('designator')}" for cid, g in named
+                               if det_by_id[cid].get("designator") != g)
+    designators_ocr = sorted(
+        g for cid, g in named if det_by_id[cid].get("designator") == g
+        and det_by_id[cid].get("text_associations", {}).get("designator_source") == "ocr")
     detected = [c for c in manifest.get("components", []) if c.get("type") != "junction_dot"]
     return {
         "components_expected": len(expected_symbols),
@@ -305,6 +315,10 @@ def evaluate(manifest: Dict, truth: Dict, iou: float = 0.5) -> Dict:
         "net_precision": len(matched_nets) / max(1, len(det_nets)),
         "missing_nets": sorted(sorted(n) for n in gt_nets - det_nets),
         "extra_nets": sorted(sorted(n) for n in det_nets - gt_nets),
+        "designators_expected": sum(1 for c in gt_comps if not c["designator"].startswith("_")),
+        "designators_correct": len(designators_correct),
+        "designators_wrong": designators_wrong,
+        "designators_from_ocr": len(designators_ocr),
         "designator_map": det_to_gt,
     }
 

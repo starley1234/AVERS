@@ -26,7 +26,11 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
   (прямоугольник), а не ANSI-зигзаг. Добавлен CPU-детектор по шаблонам
   библиотеки, демо-схема БКС с эталонным netlist (`data/demo_bks_schematic.*`)
   и кнопка «Демо-схема» в Web UI. Демо даёт 19/19 компонентов и 11/11 цепей.
-  Всё описано в **`docs/GOST_LIBRARY_AND_TEMPLATE_DETECTOR.md`**. Новые классы
+  Всё описано в **`docs/GOST_LIBRARY_AND_TEMPLATE_DETECTOR.md`**.
+  С установленным EasyOCR (`pip install easyocr`) позиционные обозначения
+  (R1, VD1, K1.1) берутся со схемы (`avers/core/designators.py`), и на демо
+  читаются все 14 из 14. Без EasyOCR тест с OCR пропускается; подставной тест
+  OCR работает всегда. Windows: `start.cmd` / `stop.cmd`. Новые классы
   добавляйте в `GOST_SYMBOLS` и зеркально в `avers/core/types.py::DETECTION_CLASSES`
   (это проверяет тест).
 - Каталог реальных (не синтетических) референсных схем для обучения:
@@ -41,7 +45,7 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt            # core deps, ~30 сек, работает без GPU/интернета к ML-хабам
-python -m pytest tests/ -q                 # должно быть "214 passed" (на момент этой правки) без единой ML-библиотеки
+python -m pytest tests/ -q                 # должно быть "~238 passed" (на момент этой правки; тест с EasyOCR пропускается, если он не установлен) без единой ML-библиотеки
 ```
 
 Это баз для 95% задач (web UI, dataset tools, active learning логика, графы,
@@ -129,7 +133,7 @@ config.yaml        # полный конфиг со всеми секциями,
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/ -q          # 214 passed, 0 failed (без ML extras), ~60 сек
+python -m pytest tests/ -q          # ~238 passed, 0 failed (без ML extras), ~60-100 сек
 ruff check avers/ --select E9,F821,F823,F811  # реальные баги (не стиль) — должно быть "All checks passed!"
 python -m avers active-learning stats                       # CLI работает
 python -c "from avers.web.app import create_app; create_app()"  # web app собирается

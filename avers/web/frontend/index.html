@@ -1001,7 +1001,8 @@ async function showDemoScore() {
     const ev = await res.json();
     const el = document.getElementById('demoScore');
     el.innerHTML = `Сверка с эталоном: компоненты <b>${ev.components_found}/${ev.components_expected}</b>, ` +
-      `цепи <b>${ev.nets_matched}/${ev.nets_expected}</b> (точность ${(ev.net_precision*100).toFixed(0)}%)`;
+      `цепи <b>${ev.nets_matched}/${ev.nets_expected}</b> (точность ${(ev.net_precision*100).toFixed(0)}%), ` +
+      `обозначения по OCR <b>${ev.designators_from_ocr}/${ev.designators_expected}</b>`;
     el.style.display = 'block';
   } catch (e) { console.warn('demo evaluate failed', e); }
 }
