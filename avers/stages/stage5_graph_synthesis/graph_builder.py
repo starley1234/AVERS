@@ -116,6 +116,7 @@ class GraphBuilder:
         max_supported_gap: int = 60,
         stroke_px: float = 2.0,
         junction_points: Optional[set] = None,
+        blocked_boxes: Optional[List[Tuple[int, int, int, int]]] = None,
     ):
         """
         Initialize graph builder.
@@ -142,6 +143,9 @@ class GraphBuilder:
         # 2.721) are always joins, even where the strokes continue
         self.stroke_px = stroke_px
         self.junction_points = set(junction_points or ())
+        # Рамки УГО: «разрыв с чернилами» внутри символа - это сам символ
+        # (выводы, обкладки и пунктир батареи на одной оси), его не замыкаем.
+        self.blocked_boxes = list(blocked_boxes or ())
 
         # Graph data structures
         self.graph = nx.MultiGraph()
@@ -404,6 +408,11 @@ class GraphBuilder:
                 if vertical and (abs(x - nx_) > 2 or
                                  (ny_ >= y if is_first else ny_ <= y)):
                     aligned = False
+            if aligned and any(
+                    x0 + 1 < max(start[0], end[0]) and min(start[0], end[0]) < x1 - 1
+                    and y0 + 1 < max(start[1], end[1]) + 1 and min(start[1], end[1]) - 1 < y1 - 1
+                    for x0, y0, x1, y1 in self.blocked_boxes):
+                continue  # разрыв проходит через тело УГО
             if aligned and self._gap_has_ink(start, end, gray):
                 self._add_wire_edge(start, end)
                 connected.union(a, b)

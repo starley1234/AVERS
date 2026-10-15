@@ -607,9 +607,14 @@ class WireVectorizer:
         # threshold = minimum number of skeleton pixels voting for a line. 50
         # dropped every wire shorter than ~50 px, i.e. most leads between two
         # closely placed УГО (after their bboxes are erased) on CAD drawings.
+        # The vote threshold follows the stroke: a lead between a corner and an
+        # erased УГО box (transformer winding -> ground) keeps only ~15-20
+        # skeleton px on a 5 px/mm sheet. Isolated short pieces (letters,
+        # specks) are dropped below by _drop_isolated_short.
+        votes = int(min(self.hough_threshold, max(10, round(3 * stroke))))
         lines = cv2.HoughLinesP(
             skeleton, rho=1, theta=np.pi/180,
-            threshold=self.hough_threshold,
+            threshold=votes,
             minLineLength=self.min_line_length,
             maxLineGap=10,
         )
@@ -1076,6 +1081,7 @@ class ProductionPipeline:
         info = getattr(getattr(detector, "_template", None), "last_info", None) or {}
         f = float(info.get("scale_factor") or 1.0)
         self._det_quant = 1.0 / f if 0.0 < f < 1.0 else 1.0
+        self._det_stroke = info.get("stroke_px")
         detections, self._text_dropped = self._drop_text_detections(detections, texts or [], image.shape)
         if self._text_dropped:
             logger.info(f"Detection: {self._text_dropped} candidates inside recognised text dropped")
@@ -1374,7 +1380,7 @@ class ProductionPipeline:
         vectorizer = WireVectorizer(
             rdp_epsilon=self.config.vectorization.rdp_epsilon,
             min_line_length=self.config.vectorization.line_thickness_threshold,
-            exclusion_padding=self.config.vectorization.snap_radius,
+            exclusion_padding=self._exclusion_pad(),
         )
         
         out = vectorizer.vectorize(image, exclusion_bboxes, text_bboxes=text_bboxes)
@@ -1382,6 +1388,22 @@ class ProductionPipeline:
         self._vectorizer_note = getattr(vectorizer, "last_note", None)
         return out
     
+    def _exclusion_pad(self) -> int:
+        """Поле вокруг рамки УГО, вырезаемое перед векторизацией (и на столько же
+        сдвигаются выводы перед привязкой).
+
+        Фиксированные 15 px на листе 5 px/мм - это 3 мм: короткие выводы
+        (отвод трансформатора к заземлению, Г-образный провод к соседнему
+        УГО) пропадали целиком. Поле нужно только на сглаживание и округление
+        рамки: ~2 толщины линии + 2 шага уменьшения листа детектором, не
+        больше значения из конфига."""
+        cfg = int(self.config.vectorization.snap_radius)
+        stroke = getattr(self, "_det_stroke", None)
+        if not stroke:
+            return cfg
+        quant = float(getattr(self, "_det_quant", 1.0))
+        return int(min(cfg, max(4, round(2.0 * stroke + 2), round(2.0 * quant + 2))))
+
     def _scaled_tolerances(self) -> Tuple[int, float]:
         """Snap radius / junction tolerance grown with the line width: skeleton
         ends retreat ~half a stroke from corners and erased bboxes, so fixed
@@ -1492,6 +1514,7 @@ class ProductionPipeline:
             stroke_px=float(getattr(self, "_stroke", 2.0) or 2.0),
             junction_points={tuple(p.coord) for c in components
                              if c.type == ComponentType.JUNCTION_DOT for p in c.pins},
+            blocked_boxes=[tuple(c.bbox) for c in components if c.type != ComponentType.JUNCTION_DOT],
         )
         
         # Add segments
@@ -1501,7 +1524,7 @@ class ProductionPipeline:
         # Add pins. Stage 3 erased the component bbox plus `pad` pixels, so a
         # wire attached to a pin on the bbox edge now ends ~pad px outside it:
         # shift edge pins outward by the same amount before snapping.
-        pad = self.config.vectorization.snap_radius
+        pad = self._exclusion_pad()
         # "On the edge" within rounding. On large sheets detected at reduced
         # scale the box edge and the pin are each rounded to ~1/f px, a fixed
         # 3 px left pins 4 px inside unshifted and out of snap reach.
