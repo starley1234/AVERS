@@ -649,7 +649,11 @@ class GOSTTemplateDetector:
         cands: List[_Candidate] = []
         if ppm:
             self.last_info["px_per_mm"] = ppm / f
-            templates = [t for mult in (0.9, 0.97, 1.04, 1.11) for sym in self.symbols
+            # Шаг 7 % масштаба - это ~3-4 px на УГО 50 px. При толщине линии
+            # ≥ 2 px контур это прощает; тонкий (≈1 px после уменьшения листа)
+            # выпадает за окно шаблона или из покрытия - нужен шаг мельче.
+            mults = (0.9, 0.97, 1.04, 1.11) if stroke >= 2.0 else (0.9, 0.94, 0.98, 1.02, 1.06, 1.11)
+            templates = [t for mult in mults for sym in self.symbols
                          for t in self._orientations(sym, ppm * mult, stroke)]
             cands = [c for c in self._match_all(img, templates) if c.score >= self.min_score]
         kept = self._nms(cands)

@@ -1,6 +1,7 @@
 """End-to-end: the demo БКС schematic must yield its reference netlist on CPU."""
 
 import json
+import sys
 from pathlib import Path
 
 import cv2
@@ -90,6 +91,33 @@ def test_large_sheet_with_thick_lines(demo, monkeypatch):
     assert ev["components_found"] == 19
     assert ev["nets_matched"] == 11, (ev["missing_nets"], ev["extra_nets"])
     assert ev["designators_from_ocr"] == ev["designators_expected"]
+
+
+def test_large_sheet_with_thin_lines(demo, monkeypatch):
+    """x3 sheet with 2 px lines (scripts/stress_demo.py, variant "thin").
+
+    Regressions it guards: relay lost between template scale steps (1 px
+    stroke after the sheet is reduced to max_side), pins left out of snap
+    reach by rounding of the reduced-scale detection, chamfered L-corners
+    not joined (diagonal gap > junction tolerance)."""
+    import importlib.util
+
+    from avers.core.validators import SchematicOCR
+
+    spec = importlib.util.spec_from_file_location(
+        "stress_demo", Path(__file__).resolve().parents[1] / "scripts" / "stress_demo.py")
+    sd = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "stress_demo", sd)  # @dataclass ищет модуль там
+    spec.loader.exec_module(sd)
+
+    image, truth = demo
+    thin, scaled = sd.v_x3_thin(image, truth)
+    labels = sd._fake_ocr_labels(scaled, 3)
+    monkeypatch.setattr(SchematicOCR, "load", lambda self: setattr(self, "_backend", "fake") or True)
+    monkeypatch.setattr(SchematicOCR, "recognize", lambda self, img: [dict(t) for t in labels])
+    _, ev = _run(thin, scaled)
+    assert ev["components_found"] == 19
+    assert ev["nets_matched"] == 11, (ev["missing_nets"], ev["extra_nets"])
 
 
 def test_committed_demo_files_match_generator(demo):

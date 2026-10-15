@@ -35,9 +35,10 @@ EL1, EL2, SB1, M1, заземления и корпус.
 | шум σ=18 / размытие / JPEG q60 / низкий контраст | 19/19 | 11/11 | 14/14 | 8–10 с |
 | PDF → рендер 300 dpi (3200×1800) | 19/19 | 11/11 | 14/14 | ~20 с |
 | ×3, толстые линии (4800×2700) | 19/19 | 11/11 | 14/14 | ~24 с |
-| ×3, искусственно истончённые линии 1–2 px | 18/19 | 9/11 | 5/14 | ~47 с |
+| ×3, линии 2 px (скелет штрихов, `thin`) | 19/19 | 11/11 | 14/14 | ~37 с |
 
 Время указано с OCR на CPU. Детекция ≈ 5 с, OCR — основная часть.
+Вся таблица воспроизводится одной командой: `scripts\stress_demo.py` (раздел 6).
 
 ---
 
@@ -53,7 +54,7 @@ stop.cmd
 
 Проверки из консоли:
 ```
-venv\Scripts\python.exe -m pytest tests -q            # 248 passed, 2 skipped, ~2 мин
+venv\Scripts\python.exe -m pytest tests -q            # 251 passed (с EasyOCR), ~3 мин
 venv\Scripts\python.exe scripts\ocr_demo_check.py [file.png]   # что прочитал OCR
 venv\Scripts\python.exe scripts\check_model_backend.py [weights.pt]
 venv\Scripts\python.exe -m avers.dataset.demo_schematic data\demo_bks_schematic.png
@@ -135,7 +136,8 @@ venv\Scripts\python.exe -m avers.dataset.demo_schematic data\demo_bks_schematic.
   - повёрнутый текст (вертикальные подписи), рукописные подписи;
   - УГО вне библиотеки (радиолампы, реле с несколькими обмотками, микросхемы
     DD/DA, блоки «A» прямоугольником) — не распознаются;
-  - очень тонкие линии на очень больших листах (см. таблицу: 9/11 цепей);
+  - тонкие линии на больших листах: демо ×3 с линиями 2 px теперь 11/11
+    (15.10.2026), но реальные сканы с линиями 1 px и разрывами не проверялись;
   - листы А0/А1 при 300 dpi (≥ 10000 px): шаблонный детектор уменьшает лист
     до 1400 px (`max_side`), мелкие УГО могут пропасть; OCR > 1 мин;
   - VLM-арбитр и Vision RAG (stage 6): с ML-зависимостями не запускались,
@@ -155,8 +157,8 @@ venv\Scripts\python.exe -m avers.dataset.demo_schematic data\demo_bks_schematic.
 ## 5. План для следующего агента (по приоритету)
 
 Перед любыми правками прогнать `venv\Scripts\python.exe -m pytest tests -q`
-(ожидается 248 passed) и `scripts\ocr_demo_check.py` (19/19, 11/11, 14/14).
-После правок — то же самое, плюс стресс-набор из раздела 6.
+(ожидается 251 passed) и `scripts\stress_demo.py` (все варианты OK,
+19/19, 11/11, 14/14). После правок — то же самое.
 
 ### A. Реальные данные (блокер для всего остального)
 1. Попросить у пользователя 10–20 реальных листов БКС (сканы/PDF). Положить в
@@ -211,17 +213,35 @@ venv\Scripts\python.exe -m avers.dataset.demo_schematic data\demo_bks_schematic.
 
 ## 6. Стресс-набор для регрессии
 
-Скрипты сейчас лежат вне репозитория (в TEMP прошлой сессии). Логику легко
-воспроизвести через `build_demo()` + `evaluate()`. Варианты:
-- масштаб ×0,75 / ×1,35 / ×3 (`INTER_NEAREST` — толстые линии);
-- шум `N(0, 18)`, `GaussianBlur(3, 0.8)`, JPEG q60, контраст `0.75*img+50`;
-- PDF: картинка в PDF с размером страницы 1600×900 px при 150 dpi, затем
-  `load_and_process`.
+`scripts/stress_demo.py` (с 15.10.2026):
+```
+venv\Scripts\python.exe scripts\stress_demo.py              # 10 вариантов, EasyOCR, ~2,5 мин
+venv\Scripts\python.exe scripts\stress_demo.py --fake-ocr   # без OCR, ~1 мин
+venv\Scripts\python.exe scripts\stress_demo.py --list | -v thin -v pdf | --fast | --details | --json out.json
+```
+Варианты: исходник; ×0,75; ×1,35; шум `N(0, 18)`; `GaussianBlur(3, 0.8)`;
+JPEG q60; контраст `0.75*img+50`; PDF (страница 1600×900 px при 150 dpi →
+`load_and_process`); ×3 `INTER_NEAREST` (толстые линии); ×3 с линиями 2 px
+(скелет штрихов, расширенный до 2 px; залитые точки соединения сохраняются).
+Код возврата 1, если вариант ниже порога (19/19 компонентов, 11/11 цепей).
+`--fake-ocr` подставляет подписи из эталона: проверяет детекцию, провода и
+граф без EasyOCR.
 
-Часть уже в тестах: `tests/test_demo_schematic.py` (деградации, ×0,75, ×3 с
-подставным OCR), `tests/test_designators.py` (настоящий EasyOCR, если
-установлен). **Хорошая первая задача:** оформить стресс-набор как
-`scripts/stress_demo.py`.
+В тестах: `tests/test_demo_schematic.py` (деградации, ×0,75, ×3 толстые и
+тонкие линии с подставным OCR), `tests/test_designators.py` (настоящий EasyOCR,
+если установлен).
+
+Исправлено по итогам `thin` (было 18/19, 2/11):
+- `template_detector.py`: при толщине линии < 2 px (после уменьшения листа до
+  `max_side`) шаг масштаба шаблонов 4 % вместо 7 %, иначе реле K1 выпадало
+  между шагами (контур за окном шаблона или покрытие < 0,85);
+- `validators.py::_run_graph_synthesis`: вывод считается лежащим на краю bbox с
+  допуском `2/scale_factor + 1` px вместо 3 px. На листе 4800 px детекция идёт
+  при f≈0,29, и округление оставляло вывод в 4 px от края: его не сдвигали
+  наружу, и он не доставал до провода;
+- `graph_builder.py::build_graph`: для L-угла (конец отрезка у конца
+  перпендикулярного) допуск ×1,5: оба отрезка отступают от скруглённого угла,
+  зазор диагональный.
 
 ---
 

@@ -1029,6 +1029,11 @@ class ProductionPipeline:
         self._last_detector = detector
         
         detections = detector.detect(image)
+        # The template detector matches on a sheet reduced to `max_side`: box and
+        # pin coordinates are then quantised to ~1/scale_factor px each.
+        info = getattr(getattr(detector, "_template", None), "last_info", None) or {}
+        f = float(info.get("scale_factor") or 1.0)
+        self._det_quant = 1.0 / f if 0.0 < f < 1.0 else 1.0
         # Точки соединения - часть провода: их нельзя вырезать из векторизации.
         bboxes = [d["bbox"] for d in detections
                   if d.get("exclude_from_wires", d.get("category") != "junction_dot")]
@@ -1373,6 +1378,10 @@ class ProductionPipeline:
         # wire attached to a pin on the bbox edge now ends ~pad px outside it:
         # shift edge pins outward by the same amount before snapping.
         pad = self.config.vectorization.snap_radius
+        # "On the edge" within rounding. On large sheets detected at reduced
+        # scale the box edge and the pin are each rounded to ~1/f px, a fixed
+        # 3 px left pins 4 px inside unshifted and out of snap reach.
+        edge_tol = max(3.0, 2.0 * float(getattr(self, "_det_quant", 1.0)) + 1.0)
         pins = []
         for comp in components:
             x0, y0, x1, y1 = comp.bbox
@@ -1382,7 +1391,7 @@ class ProductionPipeline:
                     # nearest bbox edge (pins sit on the edge, ±rounding)
                     edges = [(px - x0, -1, 0), (x1 - px, 1, 0), (py - y0, 0, -1), (y1 - py, 0, 1)]
                     gap, sx, sy = min(edges, key=lambda e: e[0])
-                    if gap <= 3:
+                    if gap <= edge_tol:
                         px += sx * pad
                         py += sy * pad
                 pins.append(PinReference(

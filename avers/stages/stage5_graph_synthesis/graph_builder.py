@@ -480,7 +480,12 @@ class GraphBuilder:
                     if other_id == seg_id:
                         continue
                     t, target, distance = self._project(point, a, b)
-                    if distance > self.junction_tolerance:
+                    # L-corner: both legs retreat from a rounded/chamfered corner,
+                    # so the gap is diagonal (≈√2 × the per-axis retreat).
+                    limit = self.junction_tolerance
+                    if t in (0.0, 1.0) and self._perpendicular(point, other_end, a, b):
+                        limit *= 1.5
+                    if distance > limit:
                         continue
                     if (gray is not None and not any(
                             hypot(point[0] - j[0], point[1] - j[1]) <= self.junction_tolerance + 1
@@ -521,6 +526,13 @@ class GraphBuilder:
 
         self._detect_junctions()
         return self.graph
+
+    @staticmethod
+    def _perpendicular(p1, p2, a, b, cos_max: float = 0.2) -> bool:
+        ux, uy = p1[0] - p2[0], p1[1] - p2[1]
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        nu, nv = hypot(ux, uy), hypot(vx, vy)
+        return nu > 0 and nv > 0 and abs(ux * vx + uy * vy) / (nu * nv) <= cos_max
 
     def _is_crossing(self, point, other_end, a, b, gray: np.ndarray) -> bool:
         """An endpoint lying on a roughly perpendicular wire is a T-joint only
