@@ -211,6 +211,10 @@ class GOSTTemplateDetector:
         pins = [(name, _transform_point(pt, w, h, rotation, mirror)) for name, pt in pins]
         if on.sum() < 10:
             return None
+        if self._background_regions(on) < self._canonical_regions(symbol):
+            # линия толще деталей УГО (обкладки конденсатора слились): на таком
+            # масштабе шаблон вырожден и совпадает с точкой соединения
+            return None
         sigma = self._sigma(stroke)
         feat = cv2.GaussianBlur(on.astype(np.float32), (0, 0), sigma)
         r = max(1, int(round(stroke)) + 1)
@@ -234,6 +238,23 @@ class GOSTTemplateDetector:
             core_sum = 0   # толстые черты/уголки линий - не зачернённая область
         return _Template(symbol, rotation, mirror, ppm, feat, on, near, pins,
                          core=core, core_sum=core_sum, body=body, body_sum=int(body.sum()))
+
+    @staticmethod
+    def _background_regions(on: np.ndarray) -> int:
+        n, _ = cv2.connectedComponents((~on).astype(np.uint8), connectivity=4)
+        return n - 1
+
+    def _canonical_regions(self, symbol: GOSTSymbol) -> int:
+        """Число областей фона УГО на удобном масштабе (12 px/мм, линия 2 px)."""
+        cache = self.__dict__.setdefault("_canon_regions", {})
+        n = cache.get(symbol.class_name)
+        if n is None:
+            w = int(round(symbol.size_mm[0] * 12)) + 1
+            h = int(round(symbol.size_mm[1] * 12)) + 1
+            canvas = np.full((h, w, 3), 255, np.uint8)
+            draw_symbol(canvas, symbol, (0, 0, w - 1, h - 1), thickness=2)
+            n = cache[symbol.class_name] = self._background_regions(canvas[:, :, 0] < 128)
+        return n
 
     def _orientations(self, symbol: GOSTSymbol, ppm: float, stroke: float) -> List[_Template]:
         """Все различимые ориентации символа (дубликаты по симметрии отброшены)."""
@@ -438,8 +459,11 @@ class GOSTTemplateDetector:
     def _ppm_range(stroke: float) -> Tuple[float, float]:
         """Допустимый масштаб px/мм по толщине линии: по ГОСТ 2.303/2.721 линии
         УГО и связи имеют толщину ~0,2-0,6 мм. Берём с запасом 0,15-0,8 мм,
-        иначе крошечные «символы» размером в пару толщин линии находятся везде."""
-        return max(1.5, stroke / 0.8), min(40.0, max(3.0, stroke / 0.15))
+        иначе крошечные «символы» размером в пару толщин линии находятся везде.
+        Верхняя граница толщины 1,2 мм: уменьшение листа (INTER_AREA, порог 25 %)
+        утолщает тонкие линии в 1,5 раза, и при 0,8 мм истинный масштаб выпадал
+        из диапазона. Вырожденные шаблоны на нижнем краю отсекает ``_render``."""
+        return max(1.5, stroke / 1.2), min(40.0, max(3.0, stroke / 0.15))
 
     def _estimate_scale(self, img: "_Img", scales: Optional[Sequence[float]] = None) -> Optional[float]:
         """Масштаб (px/мм в координатах img): тот, при котором больше всего
@@ -453,7 +477,14 @@ class GOSTTemplateDetector:
             while ppm <= hi:
                 scales.append(ppm)
                 ppm *= 1.12
-        templates = [t for ppm in scales for sym in probes for rot in (0, 1)
+        scores = self._scale_scores(img, scales, probes)
+        self._last_scale_scores = scores
+        return max(scores, key=scores.get) if scores else None
+
+    def _scale_scores(self, img: "_Img", scales: Sequence[float],
+                      symbols: Sequence[GOSTSymbol]) -> Dict[float, float]:
+        """{масштаб: оценка} по лучшему совпадению каждого класса."""
+        templates = [t for ppm in scales for sym in symbols for rot in (0, 1)
                      for t in [self._render(sym, ppm, img.stroke, rot, False)] if t is not None]
         cands = self._match_all(img, templates, max_peaks=30)
         per_scale: Dict[float, Dict[str, float]] = {}
@@ -462,15 +493,38 @@ class GOSTTemplateDetector:
                 continue
             d = per_scale.setdefault(c.tmpl.ppm, {})
             d[c.tmpl.symbol.class_name] = max(d.get(c.tmpl.symbol.class_name, 0.0), c.score)
-        best_ppm, best_val = None, 0.0
-        for ppm, d in per_scale.items():
-            # Вклад - превышение порога, а не сама оценка: три почти точных
-            # совпадения (0,97) должны перевешивать четыре случайных (0,7) у
-            # крошечных шаблонов на мелком масштабе.
-            val = sum((v - self.min_score + 0.05) for v in d.values())
-            if val > best_val + 1e-9:
-                best_ppm, best_val = ppm, val
-        return best_ppm
+        # Вклад - превышение порога, а не сама оценка: три почти точных
+        # совпадения (0,97) должны перевешивать четыре случайных (0,7) у
+        # крошечных шаблонов на мелком масштабе.
+        return {ppm: sum((v - self.min_score + 0.05) for v in d.values()) for ppm, d in per_scale.items()}
+
+    def _resolve_scale(self, img: "_Img", coarse: float) -> float:
+        """Выбор между близкими по оценке масштабами по всем классам библиотеки.
+
+        Опорные классы неоднозначны: лампа ×1,26 размером с окружность
+        генератора/двигателя, и лист с машинами «находил» лампы не в том
+        масштабе. Масштабы с оценкой ≥ 60 % лучшей (не ближе 15 % друг к
+        другу) сравниваются по всем 27 классам."""
+        scores = getattr(self, "_last_scale_scores", None) or {}
+        if not scores:
+            return coarse
+        best = max(scores.values())
+        rivals = []
+        for ppm, v in sorted(scores.items(), key=lambda kv: -kv[1]):
+            if v < 0.6 * best:
+                break
+            if all(abs(ppm / r - 1) > 0.15 for r in rivals):
+                rivals.append(ppm)
+            if len(rivals) == 3:
+                break
+        if len(rivals) < 2:
+            return coarse
+        full = self._scale_scores(img, rivals, self.symbols)
+        if not full:
+            return coarse
+        win = max(full, key=full.get)
+        self.last_info["scale_rivals"] = {round(k, 2): round(v, 2) for k, v in full.items()}
+        return win
 
     @staticmethod
     def _twin_winner(img: "_Img", a: _Candidate, b: _Candidate) -> Optional[_Candidate]:
@@ -517,8 +571,11 @@ class GOSTTemplateDetector:
                         drop = True
                         break
                 # Близкие оценки: побеждает символ, объясняющий больше штрихов
-                # (светодиод > диод, кнопка > контакт, батарея > конденсатор).
-                if c.explained >= 1.3 * k.explained and c.score >= k.score - 0.1:
+                # (светодиод > диод, кнопка > контакт, батарея > конденсатор),
+                # но не ценой неподключённого вывода: провод, пересекающий
+                # вывод резистора без точки, - не движок потенциометра.
+                if (c.explained >= 1.3 * k.explained and c.score >= k.score - 0.1
+                        and c.free_pins <= k.free_pins):
                     kept[i] = c
                 drop = True
                 break
@@ -532,7 +589,7 @@ class GOSTTemplateDetector:
                 for j in range(i + 1, len(kept)):
                     if _overlap_ratio(kept[i].box, kept[j].box) >= 0.45:
                         a, b = kept[i], kept[j]
-                        loser = j if (a.explained, a.score) >= (b.explained, b.score) else i
+                        loser = j if (-a.free_pins, a.explained, a.score) >= (-b.free_pins, b.explained, b.score) else i
                         kept.pop(loser)
                         changed = True
                         break
@@ -783,12 +840,22 @@ class GOSTTemplateDetector:
             if max(h, w) > 700 and stroke >= 2.5:
                 small = cv2.resize(ink.astype(np.uint8) * 255, (w // 2, h // 2),
                                    interpolation=cv2.INTER_AREA) >= 64
-                coarse = self._estimate_scale(self._prepare(small))
-                coarse = coarse * 2 if coarse else None
+                small_img = self._prepare(small)
+                # копии верим, только если линии на ней не истончились до 1 px
+                # и опорные УГО нашлись уверенно
+                if small_img.stroke >= 1.5:
+                    coarse = self._estimate_scale(small_img)
+                    scores = self._last_scale_scores
+                    if coarse and max(scores.values()) >= 0.8:
+                        coarse *= 2
+                        self._last_scale_scores = {k * 2: v for k, v in scores.items()}
+                    else:
+                        coarse = None
             if coarse is None:
                 coarse = self._estimate_scale(img)
             ppm = coarse
             if coarse:
+                coarse = self._resolve_scale(img, coarse)
                 ppm = self._estimate_scale(img, [coarse * m for m in (0.89, 0.94, 1.0, 1.06, 1.12)]) or coarse
         self.last_info.update({"stroke_px": stroke / f, "scale_factor": f})
         cands: List[_Candidate] = []
