@@ -3,7 +3,8 @@
 CLI для работы с датасетом ГОСТ УГО + публичные датасеты.
 
 Использование:
-  python -m avers.dataset.cli generate --num 1000 --output /tmp/avers_dataset
+  python -m avers.dataset.cli generate-v2 --output data/synth_v2 --num-train 2000 --num-val 200
+  python -m avers.dataset.cli generate --num 1000 --output /tmp/avers_dataset   (устарел, 6 классов)
   python -m avers.dataset.cli train --data /tmp/avers_dataset/dataset.yaml --model rtdetr-l
   python -m avers.dataset.cli public list
   python -m avers.dataset.cli public download --dataset masala-chai
@@ -38,6 +39,23 @@ def cmd_generate(args):
     logger.info(f"Train: {args.num_train}, Val: {args.num_val}, Test: {args.num_test}")
 
 
+def cmd_generate_v2(args):
+    """Датасет YOLO из генератора схем v2 (все 31 класс, эталонные netlist)."""
+    from avers.dataset.schematic_gen import GenConfig, export_yolo_dataset
+
+    cfg = GenConfig(ppm_range=(args.ppm_min, args.ppm_max))
+    yaml_path = export_yolo_dataset(
+        args.output, num_train=args.num_train, num_val=args.num_val, seed=args.seed,
+        tile=args.tile, overlap=args.overlap, ext=args.format, degrade_p=args.degrade,
+        workers=args.workers, config=cfg, progress=True,
+    )
+    print(f"Датасет: {yaml_path}")
+    print(f"Статистика: {Path(args.output) / 'stats.json'}")
+    print(f"Обучение: python -m avers.dataset.cli train --data {yaml_path} --model yolo11s "
+          f"--imgsz {args.tile or 1024} --device 0")
+    return 0
+
+
 def cmd_train(args):
     """Обучение модели."""
     from avers.dataset.train import train_yolo, train_rtdetr
@@ -50,7 +68,9 @@ def cmd_train(args):
     model_type = args.model.lower()
     
     if "yolo" in model_type:
-        model_name = args.pretrained or ("yolo11x.pt" if "x" in model_type else "yolo11m.pt")
+        # yolo11n/s/m/l/x -> yolo11s.pt и т.д. (раньше любой «не x» становился yolo11m)
+        default = f"{model_type}.pt" if model_type[-1:] in "nsmlx" and model_type[-2:-1].isdigit() else "yolo11m.pt"
+        model_name = args.pretrained or default
         train_yolo(
             data_yaml=data_yaml,
             model_name=model_name,
@@ -209,13 +229,28 @@ def main():
     gen_parser.add_argument("--num-test", type=int, default=100, help="Number of test images")
     gen_parser.add_argument("--image-size", type=int, default=1024, help="Image size")
     
+    # Generate v2 (schematic_gen)
+    g2 = subparsers.add_parser("generate-v2", help="Synthetic schematics v2: YOLO dataset + reference netlists")
+    g2.add_argument("--output", "-o", type=str, required=True, help="Output directory")
+    g2.add_argument("--num-train", type=int, default=2000, help="Train sheets (each gives several tiles)")
+    g2.add_argument("--num-val", type=int, default=200, help="Val sheets")
+    g2.add_argument("--seed", type=int, default=0)
+    g2.add_argument("--tile", type=int, default=1024, help="Tile size (0 = whole sheet)")
+    g2.add_argument("--overlap", type=float, default=0.2)
+    g2.add_argument("--format", choices=["png", "jpg"], default="png")
+    g2.add_argument("--degrade", type=float, default=0.7, help="Share of sheets with scan effects")
+    g2.add_argument("--ppm-min", type=float, default=4.0, help="Min scale, px/mm")
+    g2.add_argument("--ppm-max", type=float, default=12.0, help="Max scale, px/mm (300 dpi = 11.8)")
+    g2.add_argument("--workers", type=int, default=4)
+
     # Train
     train_parser = subparsers.add_parser("train", help="Train detection model")
     train_parser.add_argument("--data", type=str, required=True, help="Path to dataset.yaml")
-    train_parser.add_argument("--model", type=str, default="rtdetr-l", help="Model: yolo11x, yolo11m, rtdetr-l, rtdetr-x")
+    train_parser.add_argument("--model", type=str, default="yolo11s",
+                              help="Model: yolo11n/s/m/l/x, rtdetr-l, rtdetr-x")
     train_parser.add_argument("--epochs", type=int, default=100, help="Epochs")
     train_parser.add_argument("--batch", type=int, default=8, help="Batch size")
-    train_parser.add_argument("--imgsz", type=int, default=640, help="Image size")
+    train_parser.add_argument("--imgsz", type=int, default=1024, help="Image size (= tile size of generate-v2)")
     train_parser.add_argument("--device", type=str, default="cuda", help="Device")
     train_parser.add_argument("--project", type=str, default="/tmp/avers_runs", help="Project dir")
     train_parser.add_argument("--pretrained", type=str, default=None, help="Pretrained weights")
@@ -269,6 +304,8 @@ def main():
     try:
         if args.command == "generate":
             cmd_generate(args)
+        elif args.command == "generate-v2":
+            return cmd_generate_v2(args)
         elif args.command == "train":
             return cmd_train(args)
         elif args.command == "export":

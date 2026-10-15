@@ -72,6 +72,7 @@ def train_yolo(
     batch: int = 8,
     device: str = "cuda",
     project: str = "/tmp/avers_runs",
+    export_onnx: bool = False,
     **kwargs
 ):
     """Обучить YOLO модель."""
@@ -86,14 +87,13 @@ def train_yolo(
     model = YOLO(model_name)
     
     config = get_training_config("yolo")
+    # явные аргументы перекрывают значения конфига (раньше передавались дважды:
+    # TypeError "multiple values for keyword argument 'epochs'")
     config.update(kwargs)
+    config.update(epochs=epochs, imgsz=imgsz, batch=batch, device=device)
     
     results = model.train(
         data=str(data_yaml),
-        epochs=epochs,
-        imgsz=imgsz,
-        batch=batch,
-        device=device,
         project=project,
         name="avers_yolo",
         **config
@@ -101,12 +101,14 @@ def train_yolo(
     
     logger.info(f"Training complete. Best model: {results}")
     
-    # Экспорт в ONNX
-    try:
-        model.export(format="onnx", dynamic=True)
-        logger.info("Exported to ONNX")
-    except Exception as e:
-        logger.warning(f"ONNX export failed: {e}")
+    # Экспорт в ONNX - только по запросу: ultralytics сам доустанавливает
+    # onnx/onnxruntime в окружение (см. ловушку opencv в AGENTS.md)
+    if export_onnx:
+        try:
+            model.export(format="onnx", dynamic=True)
+            logger.info("Exported to ONNX")
+        except Exception as e:
+            logger.warning(f"ONNX export failed: {e}")
     
     return results
 
@@ -119,6 +121,7 @@ def train_rtdetr(
     batch: int = 8,
     device: str = "cuda",
     project: str = "/tmp/avers_runs",
+    export_onnx: bool = False,
     **kwargs
 ):
     """Обучить RT-DETR модель."""
@@ -134,13 +137,10 @@ def train_rtdetr(
     
     config = get_training_config("rtdetr")
     config.update(kwargs)
+    config.update(epochs=epochs, imgsz=imgsz, batch=batch, device=device)
     
     results = model.train(
         data=str(data_yaml),
-        epochs=epochs,
-        imgsz=imgsz,
-        batch=batch,
-        device=device,
         project=project,
         name="avers_rtdetr",
         **config
@@ -148,12 +148,13 @@ def train_rtdetr(
     
     logger.info(f"Training complete. Best model: {results}")
     
-    # Экспорт
-    try:
-        model.export(format="onnx", dynamic=True)
-        logger.info("Exported to ONNX")
-    except Exception as e:
-        logger.warning(f"ONNX export failed: {e}")
+    # Экспорт - только по запросу (см. train_yolo)
+    if export_onnx:
+        try:
+            model.export(format="onnx", dynamic=True)
+            logger.info("Exported to ONNX")
+        except Exception as e:
+            logger.warning(f"ONNX export failed: {e}")
     
     return results
 
