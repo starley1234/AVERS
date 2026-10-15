@@ -46,6 +46,8 @@ def _scale_truth(truth: Truth, s: float) -> Truth:
     scaled = json.loads(json.dumps(truth))
     for comp in scaled["components"]:
         comp["bbox"] = [int(round(v * s)) for v in comp["bbox"]]
+    for lb in scaled.get("labels", []):
+        lb["bbox"] = [int(round(v * s)) for v in lb["bbox"]]
     return scaled
 
 
@@ -159,8 +161,11 @@ VARIANTS: List[Variant] = [
 # --- запуск --------------------------------------------------------------------
 
 def _fake_ocr_labels(truth: Truth, scale_hint: float) -> List[Dict]:
-    """Подставные подписи над УГО. ``scale_hint`` - масштаб листа относительно
-    исходной демо-схемы 1600×900 (×3 -> 3)."""
+    """Подставные подписи. Если эталон хранит рамки подписей (``labels``) -
+    они и есть ответ OCR; иначе рамки над УГО. ``scale_hint`` - масштаб листа
+    относительно исходной демо-схемы 1600×900 (×3 -> 3)."""
+    if truth.get("labels"):
+        return [{"text": lb["text"], "bbox": tuple(lb["bbox"]), "confidence": 0.9} for lb in truth["labels"]]
     labels = []
     off_hi, off_lo, width = (int(80 * scale_hint / 3), int(30 * scale_hint / 3), int(100 * scale_hint / 3))
     for comp in truth["components"]:

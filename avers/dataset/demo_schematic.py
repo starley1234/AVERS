@@ -58,6 +58,7 @@ class _Sheet:
         self.ppm = ppm
         self.img = np.full((self.h, self.w, 3), 255, np.uint8)
         self.components: List[Dict] = []
+        self.labels: List[Dict] = []  # рамки подписей (для подставного OCR)
         self._pins: Dict[str, Pt] = {}
 
     # --- symbols -----------------------------------------------------------
@@ -122,6 +123,8 @@ class _Sheet:
         else:
             org = ((x0 + x1) // 2 - tw // 2, y1 + th + 10)
         cv2.putText(self.img, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+        (tw, th), base = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+        self.labels.append({"text": text, "bbox": [org[0], org[1] - th, org[0] + tw, org[1] + base]})
 
     # --- wires -------------------------------------------------------------
     def pin(self, ref: str) -> Pt:
@@ -137,6 +140,8 @@ class _Sheet:
 
     def text(self, s: str, org: Pt, scale: float = 0.7) -> None:
         cv2.putText(self.img, s, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 1, cv2.LINE_AA)
+        (tw, th), base = cv2.getTextSize(s, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+        self.labels.append({"text": s, "bbox": [org[0], org[1] - th, org[0] + tw, org[1] + base]})
 
 
 def build_demo() -> Tuple[np.ndarray, Dict]:
@@ -234,6 +239,7 @@ def build_demo() -> Tuple[np.ndarray, Dict]:
         "image": {"width": s.w, "height": s.h, "px_per_mm": s.ppm, "line_px": LINE},
         "components": s.components,
         "nets": [sorted(n) for n in nets],
+        "labels": s.labels,
         "notes": "Designators starting with '_' are unnamed symbols (ground/chassis). "
                  "X1:1 and X1:3 have wires on both sides of the connector cell.",
     }

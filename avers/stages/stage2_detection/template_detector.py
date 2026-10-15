@@ -557,7 +557,9 @@ class GOSTTemplateDetector:
         na, nb = int(only_a.sum()), int(only_b.sum())
         if na < 3 and nb < 3:
             return None
-        win = img.ink[y0:y1, x0:x1]
+        # без распознанного текста: подпись над контактом - не толкатель кнопки
+        ink = img.ring_ink if img.ring_ink is not None else img.ink
+        win = ink[y0:y1, x0:x1]
         fa = float(win[only_a].mean()) if na >= 3 else None
         fb = float(win[only_b].mean()) if nb >= 3 else None
         # у одного из шаблонов нет собственных штрихов (вложенный символ):
@@ -578,8 +580,10 @@ class GOSTTemplateDetector:
             for i, k in enumerate(kept):
                 if _overlap_ratio(c.box, k.box) < 0.45:
                     continue
-                if img is not None and k.score - c.score <= 0.08:
+                twin_undecided = False
+                if img is not None and k.score - c.score <= 0.15:
                     w = self._twin_winner(img, k, c)
+                    twin_undecided = w is None
                     other = c if w is k else k
                     if w is not None and w.free_pins <= other.free_pins:
                         kept[i] = w
@@ -589,7 +593,11 @@ class GOSTTemplateDetector:
                 # (светодиод > диод, кнопка > контакт, батарея > конденсатор),
                 # но не ценой неподключённого вывода: провод, пересекающий
                 # вывод резистора без точки, - не движок потенциометра.
-                if (c.explained >= 1.3 * k.explained and c.score >= k.score - 0.1
+                # Если сравнение собственных штрихов ничего не решило, крупный
+                # шаблон побеждает только при почти равной оценке (иначе
+                # замыкающий контакт 0,98 уступал размыкающему 0,90).
+                margin = 0.03 if twin_undecided else 0.1
+                if (c.explained >= 1.3 * k.explained and c.score >= k.score - margin
                         and c.free_pins <= k.free_pins):
                     kept[i] = c
                 drop = True
