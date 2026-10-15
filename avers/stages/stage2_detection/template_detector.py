@@ -165,11 +165,16 @@ class GOSTTemplateDetector:
         if not ink.any():
             return 2.0
         from skimage.morphology import skeletonize
-        skel_len = int(skeletonize(ink).sum())
-        if skel_len == 0:
+        skel = skeletonize(ink)
+        if not skel.any():
             return 2.0
-        # Площадь штрихов / длина скелета = средняя толщина линии.
-        return float(np.clip(ink.sum() / skel_len, 1.0, 12.0))
+        # Медиана местной толщины по скелету (2·расстояние до фона - 1).
+        # Прежняя «площадь / длина скелета» - среднее: жирные подписи, точки
+        # соединения и залитые УГО завышали её в 1,5-2 раза, и истинный
+        # масштаб выпадал из допустимого диапазона (_ppm_range).
+        dist = cv2.distanceTransform(np.pad(ink, 1).astype(np.uint8), cv2.DIST_L2,
+                                     cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+        return float(np.clip(np.median(2.0 * dist[skel] - 1.0), 1.0, 12.0))
 
     def _sigma(self, stroke: float) -> float:
         return max(1.0, 0.6 * stroke)
@@ -415,16 +420,18 @@ class GOSTTemplateDetector:
         иначе крошечные «символы» размером в пару толщин линии находятся везде."""
         return max(1.5, stroke / 0.8), min(40.0, max(3.0, stroke / 0.15))
 
-    def _estimate_scale(self, img: "_Img") -> Optional[float]:
+    def _estimate_scale(self, img: "_Img", scales: Optional[Sequence[float]] = None) -> Optional[float]:
         """Масштаб (px/мм в координатах img): тот, при котором больше всего
-        опорных символов находится уверенно."""
+        опорных символов находится уверенно. ``scales`` - проверяемые значения
+        (по умолчанию весь допустимый диапазон с шагом 12 %)."""
         probes = [s for s in self.symbols if s.class_name in PROBE_CLASSES] or self.symbols
-        lo, hi = self._ppm_range(img.stroke)
-        scales = []
-        ppm = lo
-        while ppm <= hi:
-            scales.append(ppm)
-            ppm *= 1.12
+        if scales is None:
+            lo, hi = self._ppm_range(img.stroke)
+            scales = []
+            ppm = lo
+            while ppm <= hi:
+                scales.append(ppm)
+                ppm *= 1.12
         templates = [t for ppm in scales for sym in probes for rot in (0, 1)
                      for t in [self._render(sym, ppm, img.stroke, rot, False)] if t is not None]
         cands = self._match_all(img, templates, max_peaks=30)
@@ -436,7 +443,10 @@ class GOSTTemplateDetector:
             d[c.tmpl.symbol.class_name] = max(d.get(c.tmpl.symbol.class_name, 0.0), c.score)
         best_ppm, best_val = None, 0.0
         for ppm, d in per_scale.items():
-            val = sum(d.values())
+            # Вклад - превышение порога, а не сама оценка: три почти точных
+            # совпадения (0,97) должны перевешивать четыре случайных (0,7) у
+            # крошечных шаблонов на мелком масштабе.
+            val = sum((v - self.min_score + 0.05) for v in d.values())
             if val > best_val + 1e-9:
                 best_ppm, best_val = ppm, val
         return best_ppm
@@ -637,14 +647,22 @@ class GOSTTemplateDetector:
             ppm = self.px_per_mm * f
         else:
             # Грубая оценка масштаба на вдвое уменьшенной копии (в 4 раза быстрее).
+            # На копии вдвое меньше штрихи тоньше 2,5 px теряются (большие листы
+            # после уменьшения до max_side) и оценка уходила на 1-2 шага вверх:
+            # там копию не используем. Грубую оценку уточняем на рабочем
+            # изображении по шагу 6 %.
             h, w = ink.shape
-            if max(h, w) > 700:
+            coarse = None
+            if max(h, w) > 700 and stroke >= 2.5:
                 small = cv2.resize(ink.astype(np.uint8) * 255, (w // 2, h // 2),
                                    interpolation=cv2.INTER_AREA) >= 64
                 coarse = self._estimate_scale(self._prepare(small))
-                ppm = coarse * 2 if coarse else self._estimate_scale(img)
-            else:
-                ppm = self._estimate_scale(img)
+                coarse = coarse * 2 if coarse else None
+            if coarse is None:
+                coarse = self._estimate_scale(img)
+            ppm = coarse
+            if coarse:
+                ppm = self._estimate_scale(img, [coarse * m for m in (0.89, 0.94, 1.0, 1.06, 1.12)]) or coarse
         self.last_info.update({"stroke_px": stroke / f, "scale_factor": f})
         cands: List[_Candidate] = []
         if ppm:

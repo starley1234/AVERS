@@ -1347,6 +1347,85 @@ class ProductionPipeline:
         junction = max(gs.junction_tolerance, 1.5 * stroke)
         return snap, junction
     
+    def _pin_bridges(
+        self,
+        edge_pins: List[Tuple[int, Tuple[int, int], Tuple[int, int], Tuple[int, int]]],
+        components: List[Component],
+        image: np.ndarray,
+        pad: int,
+    ) -> List[List[Tuple[int, int]]]:
+        """Direct wires between facing pins of neighbouring components.
+
+        Stage 4 erases every component box plus ``pad`` px, so a lead shorter
+        than ~2*pad + Hough min length (a transistor base to a socket, two
+        series elements in a branch) leaves no wire segment at all. Two pins
+        of different components are bridged when they face each other along
+        one axis, a continuous stroke joins them in the source image and no
+        other component box lies between them. Returns polylines from one
+        *shifted* pin coordinate (the ones used for snapping) to the other."""
+        if len(edge_pins) < 2:
+            return []
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if image.ndim == 3 else image
+        otsu_t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        dark = gray < max(100.0, min(170.0, otsu_t + 20))
+        H, W = dark.shape
+        stroke = float(getattr(self, "_stroke", 2.0) or 2.0)
+        quant = float(getattr(self, "_det_quant", 1.0))
+        align = max(3.0, 2.0 * quant + stroke)
+        half = int(round(max(2.0, quant + stroke)))
+        max_len = 2 * pad + 25 * stroke + 40
+        boxes = [c.bbox for c in components]
+        solid = [c.type != ComponentType.JUNCTION_DOT for c in components]
+        out = []
+        for i in range(len(edge_pins)):
+            ci, a, da, sa = edge_pins[i]
+            for j in range(i + 1, len(edge_pins)):
+                cj, b, db, sb = edge_pins[j]
+                if ci == cj:
+                    continue
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                if da[0] and abs(dy) <= align and da == (int(np.sign(dx)), 0) and db == (-da[0], 0):
+                    length = abs(dx)
+                elif da[1] and abs(dx) <= align and da == (0, int(np.sign(dy))) and db == (0, -da[1]):
+                    length = abs(dy)
+                else:
+                    continue
+                if length < 2 or length > max_len:
+                    continue
+                horizontal = bool(da[0])
+                # no other component between the pins
+                lo = (min(a[0], b[0]), min(a[1], b[1]))
+                hi = (max(a[0], b[0]), max(a[1], b[1]))
+                blocked = False
+                for k, (x0, y0, x1, y1) in enumerate(boxes):
+                    if k in (ci, cj) or not solid[k]:
+                        continue
+                    if x0 + 1 < hi[0] and lo[0] < x1 - 1 and y0 + 1 < hi[1] + 1 and lo[1] - 1 < y1 - 1:
+                        blocked = True
+                        break
+                if blocked:
+                    continue
+                # continuous stroke along the line (window across it absorbs rounding)
+                n = int(length) + 1
+                xs = np.rint(np.linspace(a[0], b[0], n)).astype(int)
+                ys = np.rint(np.linspace(a[1], b[1], n)).astype(int)
+                hits = 0
+                for x, y in zip(xs, ys):
+                    if horizontal:
+                        win = dark[max(0, y - half):min(H, y + half + 1), min(max(x, 0), W - 1)]
+                    else:
+                        win = dark[min(max(y, 0), H - 1), max(0, x - half):min(W, x + half + 1)]
+                    hits += bool(win.any())
+                if hits / n < 0.92:
+                    continue
+                # Through the real pin points: when the pins are closer than
+                # 2*pad the shifted points almost coincide, the graph merges
+                # them and a direct sa-sb segment would collapse to nothing.
+                pts = [sa, a, b, sb]
+                pts = [p for k, p in enumerate(pts) if k == 0 or p != pts[k - 1]]
+                out.append(pts)
+        return out
+
     def _run_graph_synthesis(
         self,
         segments: List[WireSegment],
@@ -1383,7 +1462,8 @@ class ProductionPipeline:
         # 3 px left pins 4 px inside unshifted and out of snap reach.
         edge_tol = max(3.0, 2.0 * float(getattr(self, "_det_quant", 1.0)) + 1.0)
         pins = []
-        for comp in components:
+        edge_pins = []  # (index of component, original coord, outward dir, shifted coord)
+        for ci, comp in enumerate(components):
             x0, y0, x1, y1 = comp.bbox
             for pin in comp.pins:
                 px, py = pin.coord
@@ -1392,13 +1472,18 @@ class ProductionPipeline:
                     edges = [(px - x0, -1, 0), (x1 - px, 1, 0), (py - y0, 0, -1), (y1 - py, 0, 1)]
                     gap, sx, sy = min(edges, key=lambda e: e[0])
                     if gap <= edge_tol:
+                        orig = (int(px), int(py))
                         px += sx * pad
                         py += sy * pad
+                        edge_pins.append((ci, orig, (sx, sy), (max(0, int(px)), max(0, int(py)))))
                 pins.append(PinReference(
                     component_id=comp.id,
                     pin_number=pin.pin_number,
                     coord=(max(0, int(px)), max(0, int(py))),
                 ))
+        if image is not None:
+            for pts in self._pin_bridges(edge_pins, components, image, pad):
+                builder.add_wire_segment(pts[0], pts[-1], pts, 0.85)
         builder.add_component_pins(pins)
         
         # Snap and build
