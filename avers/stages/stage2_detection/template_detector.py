@@ -532,26 +532,40 @@ class GOSTTemplateDetector:
         оксидный): одинаковое окно, почти одинаковая оценка. Сравниваются
         только пиксели, которыми шаблоны отличаются: чьи собственные штрихи
         есть на чертеже, тот и победил. None - различить не удалось."""
-        if a.tmpl.shape != b.tmpl.shape or a.tmpl.symbol.class_name == b.tmpl.symbol.class_name:
+        if a.tmpl.symbol.class_name == b.tmpl.symbol.class_name:
             return None
-        dx, dy = b.x - a.x, b.y - a.y
-        if abs(dx) > 3 or abs(dy) > 3:
+        # общий кадр - объединение окон
+        x0, y0 = min(a.x, b.x), min(a.y, b.y)
+        ah, aw = a.tmpl.shape
+        bh, bw = b.tmpl.shape
+        x1, y1 = max(a.x + aw, b.x + bw), max(a.y + ah, b.y + bh)
+        H, W = img.ink.shape
+        if x0 < 0 or y0 < 0 or x1 > W or y1 > H:
             return None
-        th, tw = a.tmpl.shape
-        b_on = np.zeros_like(a.tmpl.on)
-        sy0, sy1 = max(0, dy), min(th, th + dy)
-        sx0, sx1 = max(0, dx), min(tw, tw + dx)
-        b_on[sy0:sy1, sx0:sx1] = b.tmpl.on[sy0 - dy:sy1 - dy, sx0 - dx:sx1 - dx]
+        ma = np.zeros((y1 - y0, x1 - x0), bool)
+        mb = np.zeros_like(ma)
+        ma[a.y - y0:a.y - y0 + ah, a.x - x0:a.x - x0 + aw] = a.tmpl.on
+        mb[b.y - y0:b.y - y0 + bh, b.x - x0:b.x - x0 + bw] = b.tmpl.on
+        # выводы (концы, лежащие на проводах) - не различие: сравниваем только тела
+        ba = np.zeros_like(ma)
+        bb = np.zeros_like(ma)
+        ba[a.y - y0:a.y - y0 + ah, a.x - x0:a.x - x0 + aw] = a.tmpl.body if a.tmpl.body is not None else a.tmpl.on
+        bb[b.y - y0:b.y - y0 + bh, b.x - x0:b.x - x0 + bw] = b.tmpl.body if b.tmpl.body is not None else b.tmpl.on
         k = np.ones((3, 3), np.uint8)
-        only_a = a.tmpl.on & ~(cv2.dilate(b_on.astype(np.uint8), k) > 0)
-        only_b = b_on & ~(cv2.dilate(a.tmpl.on.astype(np.uint8), k) > 0)
-        if only_a.sum() < 3 and only_b.sum() < 3:
+        only_a = ba & ~(cv2.dilate(mb.astype(np.uint8), k) > 0)
+        only_b = bb & ~(cv2.dilate(ma.astype(np.uint8), k) > 0)
+        na, nb = int(only_a.sum()), int(only_b.sum())
+        if na < 3 and nb < 3:
             return None
-        win = img.ink[a.y:a.y + th, a.x:a.x + tw]
-        if win.shape != only_a.shape:
-            return None
-        fa = float(win[only_a].mean()) if only_a.sum() >= 3 else 0.0
-        fb = float(win[only_b].mean()) if only_b.sum() >= 3 else 0.0
+        win = img.ink[y0:y1, x0:x1]
+        fa = float(win[only_a].mean()) if na >= 3 else None
+        fb = float(win[only_b].mean()) if nb >= 3 else None
+        # у одного из шаблонов нет собственных штрихов (вложенный символ):
+        # решает, есть ли на чертеже штрихи «большого»
+        if fa is None:
+            return b if fb >= 0.5 else (a if fb <= 0.2 else None)
+        if fb is None:
+            return a if fa >= 0.5 else (b if fa <= 0.2 else None)
         if abs(fa - fb) < 0.2:
             return None
         return a if fa > fb else b
@@ -566,7 +580,8 @@ class GOSTTemplateDetector:
                     continue
                 if img is not None and k.score - c.score <= 0.08:
                     w = self._twin_winner(img, k, c)
-                    if w is not None:
+                    other = c if w is k else k
+                    if w is not None and w.free_pins <= other.free_pins:
                         kept[i] = w
                         drop = True
                         break
