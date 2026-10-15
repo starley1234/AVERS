@@ -96,6 +96,7 @@ class _Img:
     near: np.ndarray       # bool, окрестность штрихов
     integral: np.ndarray   # интегральное изображение штрихов
     stroke: float          # толщина линии, px
+    ring_ink: Optional[np.ndarray] = None  # штрихи без распознанного текста (для _ring_ink)
 
 
 def _transform_point(pt: Tuple[int, int], w: int, h: int, rotation: int, mirror: bool) -> Tuple[int, int]:
@@ -107,6 +108,17 @@ def _transform_point(pt: Tuple[int, int], w: int, h: int, rotation: int, mirror:
         x, y = y, w - 1 - x
         w, h = h, w
     return (x, y)
+
+
+def _pin_edge(px: int, py: int, tw: int, th: int) -> Optional[str]:
+    """Сторона окна шаблона, на которой лежит вывод (ближайшая, в пределах 1 px).
+
+    Проверка «px >= tw-2» раньше «py <= 1» относила выводы узких УГО
+    (вертикальная катушка 7 px шириной) к правой стороне: провод искался не
+    там, и символ отбрасывался как неподключённый."""
+    d = {"left": px, "right": tw - 1 - px, "top": py, "bottom": th - 1 - py}
+    edge = min(d, key=d.get)
+    return edge if d[edge] <= 1 else None
 
 
 def _overlap_ratio(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
@@ -147,6 +159,7 @@ class GOSTTemplateDetector:
         self.max_ring = max_ring
         self._stroke = 2.0
         self._integral = None
+        self._grid_boxes: List[Tuple[int, int, int, int]] = []
         self.last_info: Dict[str, object] = {}
 
     # ------------------------------------------------------------------ utils
@@ -235,7 +248,11 @@ class GOSTTemplateDetector:
                     if o.on.shape == t.on.shape:
                         inter = np.logical_and(o.on, t.on).sum()
                         union = np.logical_or(o.on, t.on).sum()
-                        if union and inter / union > 0.8:
+                        # Только практически совпадающие: при пороге 0,8
+                        # отбрасывались варианты, отличающиеся мелкой деталью
+                        # (транзистор, отражённый по вертикали, - стрелка
+                        # эмиттера), и класс/выводы определялись неверно.
+                        if union and inter / union > 0.95:
                             dup = True
                             break
                 if not dup:
@@ -346,13 +363,14 @@ class GOSTTemplateDetector:
         out = []
         for _, (px, py) in tmpl.pins:
             gx, gy = x + px, y + py
-            if px <= 1:
+            edge = _pin_edge(px, py, tw, th)
+            if edge == "left":
                 xs, ys, horiz = np.arange(x - m, x), None, True
-            elif px >= tw - 2:
+            elif edge == "right":
                 xs, ys, horiz = np.arange(x + tw, x + tw + m), None, True
-            elif py <= 1:
+            elif edge == "top":
                 xs, ys, horiz = None, np.arange(y - m, y), False
-            elif py >= th - 2:
+            elif edge == "bottom":
                 xs, ys, horiz = None, np.arange(y + th, y + th + m), False
             else:
                 out.append(True)
@@ -380,7 +398,9 @@ class GOSTTemplateDetector:
         «символ» - фрагмент более крупной фигуры (угол провода, часть другого
         УГО, буква), и кандидат отбрасывается."""
         th, tw = tmpl.shape
-        ink = img.ink
+        # Подписи рядом с УГО - норма (позиционное обозначение в 1-2 мм от
+        # контура); распознанный текст в кольце не учитываем.
+        ink = img.ring_ink if img.ring_ink is not None else img.ink
         H, W = ink.shape
         m = max(3, int(round(1.0 * tmpl.ppm)))
         x0, y0 = max(0, x - m), max(0, y - m)
@@ -392,10 +412,11 @@ class GOSTTemplateDetector:
         a = int(round(img.stroke)) + 2
         for _, (px, py) in tmpl.pins:
             gx, gy = x + px - x0, y + py - y0
-            if px <= 1 or px >= tw - 2:      # вывод на левой/правой стороне
-                region &= ~self._side_mask(region.shape, gx, gy, a, horizontal=True, left=(px <= 1))
-            if py <= 1 or py >= th - 2:      # вывод на верхней/нижней стороне
-                region &= ~self._side_mask(region.shape, gx, gy, a, horizontal=False, left=(py <= 1))
+            edge = _pin_edge(px, py, tw, th)
+            if edge in ("left", "right"):     # вывод на левой/правой стороне
+                region &= ~self._side_mask(region.shape, gx, gy, a, horizontal=True, left=(edge == "left"))
+            elif edge in ("top", "bottom"):   # вывод на верхней/нижней стороне
+                region &= ~self._side_mask(region.shape, gx, gy, a, horizontal=False, left=(edge == "top"))
         perimeter = 2.0 * (tw + th)
         return float(region.sum()) / max(1.0, perimeter * img.stroke)
 
@@ -451,7 +472,37 @@ class GOSTTemplateDetector:
                 best_ppm, best_val = ppm, val
         return best_ppm
 
-    def _nms(self, cands: List[_Candidate]) -> List[_Candidate]:
+    @staticmethod
+    def _twin_winner(img: "_Img", a: _Candidate, b: _Candidate) -> Optional[_Candidate]:
+        """Различить «близнецов» (n-p-n / p-n-p, диод / стабилитрон, C / C
+        оксидный): одинаковое окно, почти одинаковая оценка. Сравниваются
+        только пиксели, которыми шаблоны отличаются: чьи собственные штрихи
+        есть на чертеже, тот и победил. None - различить не удалось."""
+        if a.tmpl.shape != b.tmpl.shape or a.tmpl.symbol.class_name == b.tmpl.symbol.class_name:
+            return None
+        dx, dy = b.x - a.x, b.y - a.y
+        if abs(dx) > 3 or abs(dy) > 3:
+            return None
+        th, tw = a.tmpl.shape
+        b_on = np.zeros_like(a.tmpl.on)
+        sy0, sy1 = max(0, dy), min(th, th + dy)
+        sx0, sx1 = max(0, dx), min(tw, tw + dx)
+        b_on[sy0:sy1, sx0:sx1] = b.tmpl.on[sy0 - dy:sy1 - dy, sx0 - dx:sx1 - dx]
+        k = np.ones((3, 3), np.uint8)
+        only_a = a.tmpl.on & ~(cv2.dilate(b_on.astype(np.uint8), k) > 0)
+        only_b = b_on & ~(cv2.dilate(a.tmpl.on.astype(np.uint8), k) > 0)
+        if only_a.sum() < 3 and only_b.sum() < 3:
+            return None
+        win = img.ink[a.y:a.y + th, a.x:a.x + tw]
+        if win.shape != only_a.shape:
+            return None
+        fa = float(win[only_a].mean()) if only_a.sum() >= 3 else 0.0
+        fb = float(win[only_b].mean()) if only_b.sum() >= 3 else 0.0
+        if abs(fa - fb) < 0.2:
+            return None
+        return a if fa > fb else b
+
+    def _nms(self, cands: List[_Candidate], img: Optional["_Img"] = None) -> List[_Candidate]:
         cands = sorted(cands, key=lambda c: -c.score)
         kept: List[_Candidate] = []
         for c in cands:
@@ -459,6 +510,12 @@ class GOSTTemplateDetector:
             for i, k in enumerate(kept):
                 if _overlap_ratio(c.box, k.box) < 0.45:
                     continue
+                if img is not None and k.score - c.score <= 0.08:
+                    w = self._twin_winner(img, k, c)
+                    if w is not None:
+                        kept[i] = w
+                        drop = True
+                        break
                 # Близкие оценки: побеждает символ, объясняющий больше штрихов
                 # (светодиод > диод, кнопка > контакт, батарея > конденсатор).
                 if c.explained >= 1.3 * k.explained and c.score >= k.score - 0.1:
@@ -484,13 +541,18 @@ class GOSTTemplateDetector:
         return kept
 
     def _detect_connector_tables(self, ink: np.ndarray, stroke: float,
-                                 occupied: List[Tuple[int, int, int, int]]) -> List[Dict]:
-        """Разъём ГОСТ 2.755-87 в виде таблицы: стопка ≥2 одинаковых ячеек."""
+                                 occupied: List[Tuple[int, int, int, int]],
+                                 ppm: Optional[float] = None) -> List[Dict]:
+        """Разъём ГОСТ 2.755-87 в виде таблицы: стопка ≥2 одинаковых ячеек.
+        При известном масштабе ячейка не больше 25 мм: замкнутые контуры из
+        проводов (ветви + общий провод) - не ячейки разъёма."""
         free = (~ink).astype(np.uint8)
         n, labels, stats, _ = cv2.connectedComponentsWithStats(free, connectivity=4)
         H, W = ink.shape
         min_side = max(8, int(3 * stroke))
+        max_side = 25 * ppm if ppm else max(W, H) * 0.5
         cells = []
+        rects = []  # все прямоугольные ячейки любого размера - для поиска сеток
         for i in range(1, n):
             x, y, w, h, area = stats[i]
             if x == 0 or y == 0 or x + w >= W or y + h >= H:
@@ -500,6 +562,9 @@ class GOSTTemplateDetector:
             if area < 0.7 * w * h:
                 continue  # не прямоугольник
             box = (int(x), int(y), int(x + w), int(y + h))
+            rects.append(box)
+            if w > max_side or h > max_side:
+                continue
             if any(_overlap_ratio(box, o) > 0.5 for o in occupied):
                 continue
             cells.append(box)
@@ -538,6 +603,16 @@ class GOSTTemplateDetector:
                 sizes = [(b[3] - b[1]) if vertical else (b[2] - b[0]) for b in boxes]
                 if max(sizes) > 1.6 * min(sizes):
                     continue  # ячейки разъёма одинаковые
+                # Сетку проверяем до «разделителя»: линии строк таблицы идут через
+                # все столбцы и иначе принимались за провод, проходящий насквозь.
+                neighbours = self._side_neighbours(rects, boxes, vertical, tol, gap)
+                if neighbours:
+                    # сетка (перечень элементов, основная надпись), а не разъём;
+                    # запоминаем вместе с соседними столбцами - УГО там не ищем
+                    boxes_g = boxes + neighbours
+                    self._grid_boxes.append((min(b[0] for b in boxes_g), min(b[1] for b in boxes_g),
+                                             max(b[2] for b in boxes_g), max(b[3] for b in boxes_g)))
+                    continue
                 if self._divider_continues(ink, boxes, vertical, stroke):
                     continue  # «разделитель» - провод, проходящий через прямоугольник
                 used.update(stack)
@@ -556,6 +631,45 @@ class GOSTTemplateDetector:
                         pins += [(str(num), (cx, y0)), (str(num), (cx, y1))]
                 tables.append({"box": (x0, y0, x1, y1), "pins": pins, "cells": len(boxes)})
         return tables
+
+    @staticmethod
+    def _merge_boxes(boxes: List[Tuple[int, int, int, int]], pad: int) -> List[Tuple[int, int, int, int]]:
+        """Объединить соприкасающиеся рамки (столбцы одной сетки) в одну."""
+        out = [list(b) for b in boxes]
+        changed = True
+        while changed:
+            changed = False
+            for i in range(len(out)):
+                for j in range(i + 1, len(out)):
+                    a, b = out[i], out[j]
+                    if a[0] - pad <= b[2] and b[0] - pad <= a[2] and a[1] - pad <= b[3] and b[1] - pad <= a[3]:
+                        out[i] = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+                        out.pop(j)
+                        changed = True
+                        break
+                if changed:
+                    break
+        return [tuple(b) for b in out]
+
+    @staticmethod
+    def _side_neighbours(rects, boxes, vertical: bool, tol: int, gap: int) -> List[Tuple[int, int, int, int]]:
+        """Ячейки той же строки вплотную к столбцу (поперёк стопки): если они
+        есть, это таблица из нескольких столбцов, а не разъём ГОСТ 2.755."""
+        members = set(boxes)
+        out = []
+        for a in boxes:
+            for b in rects:
+                if b in members:
+                    continue
+                if vertical:
+                    same_row = abs(a[1] - b[1]) <= tol and abs(a[3] - b[3]) <= tol
+                    touching = 0 <= b[0] - a[2] <= gap or 0 <= a[0] - b[2] <= gap
+                else:
+                    same_row = abs(a[0] - b[0]) <= tol and abs(a[2] - b[2]) <= tol
+                    touching = 0 <= b[1] - a[3] <= gap or 0 <= a[1] - b[3] <= gap
+                if same_row and touching:
+                    out.append(b)
+        return out
 
     @staticmethod
     def _divider_continues(ink: np.ndarray, boxes, vertical: bool, stroke: float) -> bool:
@@ -620,8 +734,12 @@ class GOSTTemplateDetector:
             dots.append(box)
         return dots
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
-        """Найти УГО. Возвращает словари в формате SlicedDetector.detect()."""
+    def detect(self, image: np.ndarray,
+               text_boxes: Optional[Sequence[Tuple[float, float, float, float]]] = None) -> List[Dict]:
+        """Найти УГО. Возвращает словари в формате SlicedDetector.detect().
+
+        ``text_boxes`` - рамки распознанного текста (координаты листа): их
+        штрихи не считаются посторонними в кольце вокруг кандидата."""
         self.last_info = {}
         if image is None or image.size == 0 or min(image.shape[:2]) < 16:
             return []
@@ -642,6 +760,15 @@ class GOSTTemplateDetector:
             ink = ink_full
         img = self._prepare(ink)
         stroke = img.stroke
+        if text_boxes:
+            ring_ink = ink.copy()
+            h, w = ink.shape
+            for x0, y0, x1, y1 in text_boxes:
+                if (x1 - x0) * (y1 - y0) > 0.1 * W0 * H0:
+                    continue
+                ring_ink[max(0, int(y0 * f) - 1):min(h, int(y1 * f) + 2),
+                         max(0, int(x0 * f) - 1):min(w, int(x1 * f) + 2)] = False
+            img.ring_ink = ring_ink
 
         if self.px_per_mm:
             ppm = self.px_per_mm * f
@@ -674,7 +801,15 @@ class GOSTTemplateDetector:
             templates = [t for mult in mults for sym in self.symbols
                          for t in self._orientations(sym, ppm * mult, stroke)]
             cands = [c for c in self._match_all(img, templates) if c.score >= self.min_score]
-        kept = self._nms(cands)
+        # Таблицы разъёмов - до символов: ячейка с цифрой похожа на машину
+        # («окружность с буквой»), надпись над таблицей - на светодиод и т.п.
+        # Регулярная стопка одинаковых ячеек надёжнее одиночного шаблона.
+        self._grid_boxes = []
+        tables = self._detect_connector_tables(ink, stroke, [], ppm)
+        zones = [t["box"] for t in tables] + self._merge_boxes(self._grid_boxes, int(2 * stroke) + 2)
+        if zones:
+            cands = [c for c in cands if not any(_overlap_ratio(c.box, z) > 0.5 for z in zones)]
+        kept = self._nms(cands, img)
 
         def up(v: float) -> int:
             return int(round(v / f))
@@ -699,7 +834,7 @@ class GOSTTemplateDetector:
                 "source": "gost_templates",
             })
 
-        for table in self._detect_connector_tables(ink, stroke, occupied_small):
+        for table in tables:
             x0, y0, x1, y1 = table["box"]
             occupied_small.append(table["box"])
             detections.append({

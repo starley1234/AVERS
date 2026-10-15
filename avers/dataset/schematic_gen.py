@@ -521,11 +521,13 @@ class SchematicGenerator:
         plan = Plan()
         s = self.put(plan, "transformer", 0, False, "1", (0, 0), label_side="top")
         plan.links.append((rail_node, f"{s.designator}:1"))
-        for n in ("2", "4"):
-            # нижние выводы обмоток - вниз к заземлению / корпусу
+        for n, d in (("2", -1), ("4", 1)):
+            # нижние выводы обмоток: наружу по стороне вывода, затем вниз к
+            # заземлению / корпусу (провод всегда отходит от вывода наружу)
             p = s.pin(n)
-            end = (p[0], p[1] + self.mm(4, 8))
-            plan.wires.append([p, end])
+            corner = (p[0] + d * self.mm(6, 9), p[1])
+            end = (corner[0], p[1] + self.mm(5, 9))
+            plan.wires.append([p, corner, end])
             self.terminal(plan, end, "bottom", f"{s.designator}:{n}", ("ground", "chassis"))
         return plan, s.pin("1"), s.pin("3"), f"{s.designator}:3"
 
@@ -545,13 +547,17 @@ class SchematicGenerator:
         plan.labels.append(self.label(des, t.box, "top"))
         plan.links.append((rail_node, f"{des}:{k}"))
         # прочие контакты: отводы влево/вправо к однополюсным УГО (не к соседним ячейкам)
+        last = {"L": -9, "R": -9}
         for i in range(1, cells + 1):
             if i == k:
                 continue
             for side in ("L", "R"):
                 if side == "R" and abs(i - k) == 1:
                     continue  # рядом с шиной справа тесно
+                if i - last[side] == 1:
+                    continue  # соседние отводы с одной стороны: УГО налезут друг на друга
                 if r.random() < 0.3:
+                    last[side] = i
                     p = t.pin(i, side)
                     d = -1 if side == "L" else 1
                     end = (p[0] + d * self.mm(5, 9), p[1])
@@ -933,9 +939,17 @@ class SchematicGenerator:
                         break
 
     # ------------------------------------------------------------- render
+    def _text(self, img: np.ndarray, s: str, org: Pt, scale: float, thick: int = 1) -> None:
+        """Отвлекающий текст: рисуется и попадает в эталон подписей (designator=False)."""
+        cv2.putText(img, s, org, self.font, scale, (0, 0, 0), thick, cv2.LINE_AA)
+        (tw, th), base = cv2.getTextSize(s, self.font, scale, thick)
+        self._extra_labels.append({"text": s, "bbox": [org[0], org[1] - th, org[0] + tw, org[1] + base],
+                                   "designator": False})
+
     def render(self) -> Tuple[np.ndarray, Dict]:
         img = np.full((self.H, self.W, 3), 255, np.uint8)
         L = self.line
+        self._extra_labels: List[Dict] = []
         if self.frame:
             fx0, fy0, fx1, fy1 = self.frame["inner"]
             cv2.rectangle(img, (fx0, fy0), (fx1, fy1), (0, 0, 0), max(L, int(round(L * 1.5))))
@@ -948,12 +962,10 @@ class SchematicGenerator:
             cv2.line(img, (tx0 + self.mm(135), ty0 + self.mm(15)), (tx1, ty0 + self.mm(15)), (0, 0, 0), L)
             cv2.line(img, (tx0 + self.mm(135), ty0), (tx0 + self.mm(135), ty1), (0, 0, 0), L)
             sc = self.text_mm * 1.6 * self.u / 22.0
-            cv2.putText(img, f"BKS.{self.seed % 1000:03d}.E3", (tx0 + self.mm(70), ty0 + self.mm(12)),
-                        self.font, sc, (0, 0, 0), max(1, L - 1), cv2.LINE_AA)
-            cv2.putText(img, "Wiring diagram", (tx0 + self.mm(70), ty0 + self.mm(32)),
-                        self.font, sc * 0.8, (0, 0, 0), 1, cv2.LINE_AA)
-            cv2.putText(img, "Sheet 1", (tx0 + self.mm(140), ty0 + self.mm(10)),
-                        self.font, sc * 0.6, (0, 0, 0), 1, cv2.LINE_AA)
+            self._text(img, f"BKS.{self.seed % 1000:03d}.E3", (tx0 + self.mm(70), ty0 + self.mm(12)),
+                       sc, max(1, L - 1))
+            self._text(img, "Wiring diagram", (tx0 + self.mm(70), ty0 + self.mm(32)), sc * 0.8)
+            self._text(img, "Sheet 1", (tx0 + self.mm(140), ty0 + self.mm(10)), sc * 0.6)
         for s in self.plan.syms:
             x0, y0 = s.x0, s.y0
             h, w = s.geom.canvas.shape[:2]
@@ -971,7 +983,7 @@ class SchematicGenerator:
             if lb.text:
                 cv2.putText(img, lb.text, lb.org, lb.font, lb.scale, (0, 0, 0), lb.thick, cv2.LINE_AA)
         for s, org, size in getattr(self, "notes", []):
-            cv2.putText(img, s, org, self.font, size * self.u / 22.0, (0, 0, 0), 1, cv2.LINE_AA)
+            self._text(img, s, org, size * self.u / 22.0)
         pt = getattr(self, "parts_table", None)
         if pt:
             x, y, rh, cols = pt["x"], pt["y"], pt["row_h"], pt["cols"]
@@ -984,11 +996,9 @@ class SchematicGenerator:
                 cv2.line(img, (x + int(c), y), (x + int(c), y + len(rows) * rh), (0, 0, 0), max(1, L - 1))
             sc = self.text_mm * 0.85 * self.u / 22.0
             for i, text in enumerate(rows):
-                cv2.putText(img, text, (cx + self.mm(2), y + i * rh + int(rh * 0.7)), self.font, sc,
-                            (0, 0, 0), 1, cv2.LINE_AA)
+                self._text(img, text, (cx + self.mm(2), y + i * rh + int(rh * 0.7)), sc)
                 if i:
-                    cv2.putText(img, "1", (cx + cols[0] + cols[1] + self.mm(3), y + i * rh + int(rh * 0.7)),
-                                self.font, sc, (0, 0, 0), 1, cv2.LINE_AA)
+                    self._text(img, "1", (cx + cols[0] + cols[1] + self.mm(3), y + i * rh + int(rh * 0.7)), sc)
         return cv2.cvtColor(img, cv2.COLOR_BGR2RGB), self.truth()
 
     def truth(self) -> Dict:
@@ -1023,7 +1033,7 @@ class SchematicGenerator:
             groups.setdefault(find(a), set()).add(a)
         nets = sorted(sorted(g) for g in groups.values() if len(g) >= 2)
         labels = [{"text": lb.text, "bbox": list(lb.box), "designator": lb.designator}
-                  for lb in self.plan.labels if lb.text]
+                  for lb in self.plan.labels if lb.text] + list(getattr(self, "_extra_labels", []))
         return {
             "image": {"width": self.W, "height": self.H, "px_per_mm": round(self.ppm, 4),
                       "line_px": self.line, "sheet_mm": list(self.sheet_mm), "seed": self.seed},

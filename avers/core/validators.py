@@ -165,12 +165,14 @@ class SlicedDetector:
         self.backend = "unavailable"
         return True
     
-    def detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
+    def detect(self, image: np.ndarray, text_boxes: Optional[List] = None) -> List[Dict[str, Any]]:
         """
         Run sliced detection on image.
         
         Args:
             image: Input image (H, W, 3) RGB
+            text_boxes: recognised text boxes (help the template detector
+                ignore labels next to symbols)
             
         Returns:
             List of detection dicts with bbox, confidence, category
@@ -179,19 +181,19 @@ class SlicedDetector:
             self.load()
         
         if self.backend == "model" and self._model is not None:
-            return self._model_detect(image)
+            return self._model_detect(image, text_boxes)
         if self.backend == "gost_templates" and self._template is not None:
-            return self._template.detect(image)
+            return self._template.detect(image, text_boxes=text_boxes)
         return self._fallback_detect(image)
     
-    def _model_detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
+    def _model_detect(self, image: np.ndarray, text_boxes: Optional[List] = None) -> List[Dict[str, Any]]:
         """Hybrid: model boxes -> GOST refinement (rotation, pins) [+ template finds]."""
         from avers.stages.stage2_detection.model_detector import merge_detections
         raw = self._model.detect(image)
         refined = self._template.refine(image, raw)
         added: List[Dict[str, Any]] = []
         if self.merge_templates:
-            merged = merge_detections(refined, self._template.detect(image))
+            merged = merge_detections(refined, self._template.detect(image, text_boxes=text_boxes))
             added = merged[len(refined):]
             refined = merged
         sources: Dict[str, int] = {}
@@ -863,9 +865,22 @@ class ProductionPipeline:
         )
         
         # Stage 1: Detection
+        # Stage 1: OCR - before detection: text boxes let the detector discard
+        # letters taken for УГО (title block, labels, notes).
         stage_start = time.time()
         try:
-            detections, component_bboxes, backend = self._run_detection(image)
+            texts, _, ocr_available = self._run_ocr(image)
+            if not ocr_available:
+                result.warnings.append("OCR недоступен: маркировки не определены")
+        except Exception as e:
+            result.errors.append(f"OCR failed: {e}")
+            result.warnings.append("Text recognition skipped")
+            texts = []
+        result.stage_timings["ocr"] = time.time() - stage_start
+
+        stage_start = time.time()
+        try:
+            detections, component_bboxes, backend = self._run_detection(image, texts)
             result.manifest.components = self._group_components(detections)
             detector = getattr(self, "_last_detector", None)
             load_error = getattr(detector, "load_error", None)
@@ -895,22 +910,16 @@ class ProductionPipeline:
         
         result.stage_timings["detection"] = time.time() - stage_start
         
-        # Stage 2: OCR
+        # Stage 2: designators - associate texts with components (may add
+        # second-pass labels read around the symbols)
         stage_start = time.time()
         try:
-            texts, text_bboxes, ocr_available = self._run_ocr(image)
-            if not ocr_available:
-                result.warnings.append("OCR недоступен: маркировки не определены")
-            # Associate texts with components (may add second-pass labels)
             self._associate_texts(result.manifest.components, texts, image=image)
-            text_bboxes = [t["bbox"] for t in texts]
         except Exception as e:
             result.errors.append(f"OCR failed: {e}")
             result.warnings.append("Text recognition skipped")
-            texts = []
-            text_bboxes = []
-        
-        result.stage_timings["ocr"] = time.time() - stage_start
+        text_bboxes = [t["bbox"] for t in texts]
+        result.stage_timings["ocr"] += time.time() - stage_start
         
         # Stage 3: Vectorization
         stage_start = time.time()
@@ -992,8 +1001,41 @@ class ProductionPipeline:
             return current.weights_path, f"registry {current.version_id}"
         return None, "none"
 
+    @staticmethod
+    def _drop_text_detections(detections: List[Dict], texts: List[Dict],
+                              shape: Tuple[int, ...]) -> Tuple[List[Dict], int]:
+        """Drop УГО found inside recognised words (title block, labels, notes).
+
+        Only texts with ≥2 letters/digits count: a lone 'M'/'G' read inside a
+        machine circle or a digit in a connector cell must not remove the
+        symbol. A detection goes when ≥50 % of its box is covered by words."""
+        words = [t for t in texts if sum(ch.isalnum() for ch in str(t.get("text", ""))) >= 2]
+        if not words or not detections:
+            return detections, 0
+        H, W = shape[:2]
+        mask = np.zeros((H, W), np.uint8)
+        for t in words:
+            x0, y0, x1, y1 = (int(round(v)) for v in t["bbox"])
+            # +половина высоты строки: «УГО» поперёк двух строк текста
+            # (межстрочный промежуток не покрыт рамками слов)
+            py, px = int(0.45 * (y1 - y0)), int(0.2 * (y1 - y0))
+            mask[max(0, y0 - py):max(0, y1 + py), max(0, x0 - px):max(0, x1 + px)] = 1
+        kept, dropped = [], 0
+        for d in detections:
+            if d.get("category") in ("junction_dot", "connector_body"):
+                kept.append(d)
+                continue
+            x0, y0, x1, y1 = (int(round(v)) for v in d["bbox"])
+            area = max(1, (x1 - x0) * (y1 - y0))
+            cover = float(mask[max(0, y0):max(0, y1), max(0, x0):max(0, x1)].sum()) / area
+            if cover >= 0.5:
+                dropped += 1
+                continue
+            kept.append(d)
+        return kept, dropped
+
     def _run_detection(
-        self, image: np.ndarray
+        self, image: np.ndarray, texts: Optional[List[Dict]] = None,
     ) -> Tuple[List[Dict], List[Tuple[int, int, int, int]], bool]:
         """Run component detection."""
         det_cfg = self.config.detection
@@ -1028,12 +1070,15 @@ class ProductionPipeline:
                     _DETECTOR_CACHE[key] = detector
         self._last_detector = detector
         
-        detections = detector.detect(image)
+        detections = detector.detect(image, text_boxes=[t["bbox"] for t in (texts or [])])
         # The template detector matches on a sheet reduced to `max_side`: box and
         # pin coordinates are then quantised to ~1/scale_factor px each.
         info = getattr(getattr(detector, "_template", None), "last_info", None) or {}
         f = float(info.get("scale_factor") or 1.0)
         self._det_quant = 1.0 / f if 0.0 < f < 1.0 else 1.0
+        detections, self._text_dropped = self._drop_text_detections(detections, texts or [], image.shape)
+        if self._text_dropped:
+            logger.info(f"Detection: {self._text_dropped} candidates inside recognised text dropped")
         # Точки соединения - часть провода: их нельзя вырезать из векторизации.
         bboxes = [d["bbox"] for d in detections
                   if d.get("exclude_from_wires", d.get("category") != "junction_dot")]

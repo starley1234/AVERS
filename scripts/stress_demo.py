@@ -159,6 +159,8 @@ VARIANTS: List[Variant] = [
 # --- запуск --------------------------------------------------------------------
 
 def _fake_ocr_labels(truth: Truth, scale_hint: float) -> List[Dict]:
+    """Подставные подписи над УГО. ``scale_hint`` - масштаб листа относительно
+    исходной демо-схемы 1600×900 (×3 -> 3)."""
     labels = []
     off_hi, off_lo, width = (int(80 * scale_hint / 3), int(30 * scale_hint / 3), int(100 * scale_hint / 3))
     for comp in truth["components"]:
@@ -188,8 +190,9 @@ def run_variant(v: Variant, image: Image, truth: Truth, fake_ocr: bool, workdir:
     data, vtruth = v.make(image, truth, workdir) if v.needs_workdir else v.make(image, truth)
     restore = None
     if fake_ocr:
+        # масштаб варианта относительно исходника (подписи - как в тесте для ×3)
         s = vtruth["components"][0]["bbox"][2] / max(1, truth["components"][0]["bbox"][2])
-        restore = _install_fake_ocr(_fake_ocr_labels(vtruth, 3 * s))
+        restore = _install_fake_ocr(_fake_ocr_labels(vtruth, s))
     t = time.time()
     try:
         if isinstance(data, Path):

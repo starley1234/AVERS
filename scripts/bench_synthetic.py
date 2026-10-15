@@ -65,6 +65,11 @@ def run_one(seed: int, cfg: GenConfig, real_ocr: bool, do_degrade: bool) -> Dict
     manifest = result.manifest.model_dump(mode="json")
     ev = evaluate(manifest, truth)
     found = set(ev["designator_map"].values())
+    false_pos: Dict[str, int] = {}
+    for c in manifest["components"]:
+        if c["type"] != "junction_dot" and c["id"] not in ev["designator_map"]:
+            k = c.get("text_associations", {}).get("gost_class", "?")
+            false_pos[k] = false_pos.get(k, 0) + 1
     by_class: Dict[str, List[int]] = {}
     for c in truth["components"]:
         hit = by_class.setdefault(c["class_name"], [0, 0])
@@ -80,6 +85,7 @@ def run_one(seed: int, cfg: GenConfig, real_ocr: bool, do_degrade: bool) -> Dict
         "component_precision": round(ev["component_precision"], 3),
         "designators": [ev["designators_correct"], ev["designators_expected"]],
         "by_class": by_class,
+        "false_pos": false_pos,
         "missed": sorted(c["designator"] for c in truth["components"] if c["designator"] not in found),
         "missing_nets": ev["missing_nets"][:10], "extra_nets": ev["extra_nets"][:10],
         "_rgb": rgb, "_truth": truth,
@@ -135,6 +141,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     for k, (h, t) in sorted(by_class.items(), key=lambda kv: kv[1][0] / max(1, kv[1][1])):
         print(f"    {k:18} {h / max(1, t):.2f}  ({h}/{t})")
 
+    fp: Dict[str, int] = {}
+    for r in rows:
+        for k, v in r["false_pos"].items():
+            fp[k] = fp.get(k, 0) + v
+    if fp:
+        print("  ложные срабатывания по классам:",
+              ", ".join(f"{k} {v}" for k, v in sorted(fp.items(), key=lambda kv: -kv[1])))
+
     worst = sorted(rows, key=lambda r: r["nets"][0] / max(1, r["nets"][1]))[:3]
     if args.save_worst:
         args.save_worst.mkdir(parents=True, exist_ok=True)
@@ -150,7 +164,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "n": len(rows), "seed": args.seed, "degrade": args.degrade, "real_ocr": args.real_ocr,
             "component_recall": comp_f / max(1, comp_e), "component_precision": comp_f / max(1, det),
             "net_recall": nets_m / max(1, nets_e), "exact_sheets": exact,
-            "by_class": by_class, "sheets": clean,
+            "by_class": by_class, "false_pos": fp, "sheets": clean,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"отчёт: {args.json}")
     return 0
