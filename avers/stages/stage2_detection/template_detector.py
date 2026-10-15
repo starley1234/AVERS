@@ -557,20 +557,28 @@ class GOSTTemplateDetector:
         na, nb = int(only_a.sum()), int(only_b.sum())
         if na < 3 and nb < 3:
             return None
-        # без распознанного текста: подпись над контактом - не толкатель кнопки
-        ink = img.ring_ink if img.ring_ink is not None else img.ink
-        win = ink[y0:y1, x0:x1]
-        fa = float(win[only_a].mean()) if na >= 3 else None
-        fb = float(win[only_b].mean()) if nb >= 3 else None
-        # у одного из шаблонов нет собственных штрихов (вложенный символ):
-        # решает, есть ли на чертеже штрихи «большого»
-        if fa is None:
-            return b if fb >= 0.5 else (a if fb <= 0.2 else None)
-        if fb is None:
-            return a if fa >= 0.5 else (b if fa <= 0.2 else None)
-        if abs(fa - fb) < 0.2:
-            return None
-        return a if fa > fb else b
+        def decide(ink: np.ndarray) -> Optional[_Candidate]:
+            win = ink[y0:y1, x0:x1]
+            fa = float(win[only_a].mean()) if na >= 3 else None
+            fb = float(win[only_b].mean()) if nb >= 3 else None
+            # у одного из шаблонов нет собственных штрихов (вложенный символ):
+            # решает, есть ли на чертеже штрихи «большого»
+            if fa is None:
+                return b if fb >= 0.5 else (a if fb <= 0.2 else None)
+            if fb is None:
+                return a if fa >= 0.5 else (b if fa <= 0.2 else None)
+            if abs(fa - fb) < 0.2:
+                return None
+            return a if fa > fb else b
+
+        w = decide(img.ink)
+        if img.ring_ink is not None:
+            # Подпись над контактом похожа на толкатель кнопки, но рамка OCR
+            # бывает шире текста и закрывает флажок стабилитрона: если с
+            # текстом и без него ответы разные - не решаем (побеждает оценка).
+            if decide(img.ring_ink) is not w:
+                return None
+        return w
 
     def _nms(self, cands: List[_Candidate], img: Optional["_Img"] = None) -> List[_Candidate]:
         cands = sorted(cands, key=lambda c: -c.score)
