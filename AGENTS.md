@@ -1,6 +1,6 @@
 ﻿# AGENTS.md — инструкция для коддинг-агентов, работающих в этом репозитории
 
-**НОВАЯ СЕССИЯ: сначала прочитайте `docs/HANDOFF.md`** (состояние прототипа, что не протестировано, план по приоритетам). Windows: `start.cmd` / `stop.cmd`, окружение `venv\`, тесты `venv\Scripts\python.exe -m pytest tests -q` (251 passed).
+**НОВАЯ СЕССИЯ: сначала прочитайте `docs/HANDOFF.md`** (состояние прототипа, что не протестировано, план по приоритетам), затем `docs/SYNTHETIC_V2_AND_BENCHMARK.md` (генератор схем v2 и бенчмарк на случайных листах). Windows: `start.cmd` / `stop.cmd`, окружение `venv\`, тесты `venv\Scripts\python.exe -m pytest tests -q` (265 passed). Регрессия: `scripts\stress_demo.py --fake-ocr` и `scripts\bench_synthetic.py --template-only`.
 
 
 Этот файл — чтобы следующий агент (или вы сами на другой машине) не тратил
@@ -53,7 +53,7 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt            # core deps, ~30 сек, работает без GPU/интернета к ML-хабам
-python -m pytest tests/ -q                 # должно быть "~251 passed" (на момент этой правки; тест с EasyOCR пропускается, если он не установлен) без единой ML-библиотеки
+python -m pytest tests/ -q                 # должно быть "~265 passed" (на момент этой правки; тест с EasyOCR пропускается, если он не установлен) без единой ML-библиотеки
 ```
 
 Это баз для 95% задач (web UI, dataset tools, active learning логика, графы,
@@ -95,7 +95,8 @@ avers/
   web/             # FastAPI: api.py (основное+active-learning stats),
                    #   active_learning_api.py (scheduler/registry/dashboard - NEW v0.3),
                    #   annotator_api.py, app.py, frontend/*.html
-  dataset/         # synthetic.py, generator.py, gost_symbols.py, train.py,
+  dataset/         # schematic_gen.py (генератор схем v2 + YOLO, актуальный),
+                   #   synthetic.py, generator.py (устарели), gost_symbols.py, train.py,
                    #   public_datasets.py, merge.py (NEW v0.3), real_schematics.py (NEW v0.3)
   active_learning/ # loop.py, metrics.py, registry.py (NEW), scheduler.py (NEW), notify.py (NEW)
   rag/             # CLIP+FAISS Vision RAG
@@ -141,7 +142,7 @@ config.yaml        # полный конфиг со всеми секциями,
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/ -q          # ~251 passed, 0 failed (без ML extras), ~60-100 сек
+python -m pytest tests/ -q          # ~265 passed, 0 failed (без ML extras), ~60-100 сек
 ruff check avers/ --select E9,F821,F823,F811  # реальные баги (не стиль) — должно быть "All checks passed!"
 python -m avers active-learning stats                       # CLI работает
 python -c "from avers.web.app import create_app; create_app()"  # web app собирается
