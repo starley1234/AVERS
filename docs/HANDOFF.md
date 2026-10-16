@@ -1,10 +1,9 @@
 # АВЕРС — состояние прототипа и план для следующего агента
 
 Обновлено: 16.10.2026. Основная рабочая копия: `C:\github\AVERS` (ветка
-`main`, push в `origin`: https://github.com/starley1234/AVERS). Сессии
-15–16.10 шли в worktree OpenCode
-`C:\Users\serg\.local\share\opencode\worktree\e81b61\playful-river`
-(detached HEAD, коммиты локальные, **не запушены**, см. раздел 8).
+`main`, push в `origin`: https://github.com/starley1234/AVERS). Работа
+сессий 15–16.10 запушена в `main` и подтянута в `C:\github\AVERS`. В venv
+стоит **torch с CUDA** (раздел 2).
 
 Читать вместе с:
 * `AGENTS.md`;
@@ -84,14 +83,18 @@ venv\Scripts\python.exe scripts\check_model_backend.py weights.pt    # пров�
 
 * ядро из `requirements.txt` (opencv-python-headless 5.0, fastapi,
   scikit-image, PyMuPDF, reportlab);
-* `easyocr 1.7.2` + `torch 2.14.1+cpu`, модели EasyOCR в `%USERPROFILE%\.EasyOCR`;
+* `easyocr 1.7.2`, модели в `%USERPROFILE%\.EasyOCR`. С CUDA-сборкой torch
+  EasyOCR сам работает на GPU: демо ×3 стало 12 с вместо 32 с;
+* **`torch 2.14.1+cu130`, `torchvision 0.29.1+cu130`** (поставлено 16.10 с
+  согласия пользователя). GPU: **RTX 5060 Ti 16 ГБ** (compute 12.0), драйвер
+  610.88 (CUDA до 13.3). Для torch 2.14.1 сборок cu128/cu129 нет, есть
+  cu130 и cu132. Ставилось так, чтобы не трогать numpy, pillow и opencv:
+  `pip install --force-reinstall --no-deps "torch==2.14.1" "torchvision==0.29.1" --index-url https://download.pytorch.org/whl/cu130`.
+  Откат на CPU: то же с `.../whl/cpu`. Проверено: CUDA-матмул, `torchvision.ops.nms`
+  на GPU, обучение `yolo11n` на `--device 0`, 265 тестов, стресс-набор с
+  EasyOCR на GPU;
 * `ultralytics 8.4.174`, **установлен `--no-deps`**: обычная установка
   притянет `opencv-python` и сломает cv2;
-* GPU есть: **RTX 5060 Ti 16 ГБ**. Torch сейчас CPU-сборка. Для GPU нужен
-  torch с CUDA 12.8+ (Blackwell):
-  `pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128`.
-  После этого проверить, что `opencv-python-headless` не заменился. Это
-  ~3 ГБ и меняет общий venv — **согласовать с пользователем**;
 * `.venv\` в корне — нерабочий мусор, используется только `venv\`.
 
 ---
@@ -151,14 +154,14 @@ venv\Scripts\python.exe scripts\check_model_backend.py weights.pt    # пров�
 
 ## 4. Что НЕ запущено / НЕ протестировано
 
-* **Обученной модели нет.** Обучение на GPU не запускалось. Датасет
-  `generate-v2` и обучение проверены только «на дым» (6 листов, 1 эпоха,
-  CPU). Нет скрипта, который оценивает обученную модель на `truth/val`
-  целыми листами (гибрид, только модель, только шаблоны).
+* **Обученной модели нет.** Настоящее обучение не запускалось. Датасет
+  `generate-v2` и обучение проверены только «на дым»: 6 листов, 3 эпохи на
+  GPU за 15 с, mAP 0, как и должно быть. Нет скрипта, который оценивает
+  обученную модель на `truth/val` целыми листами (гибрид, только модель,
+  только шаблоны).
 * **Реальных схем пользователя нет** (на 16.10 «сканов пока нет»). На сканах
   из `data/reference_schematics/` результат плохой и после этой сессии не
   перемерялся.
-* **GPU не использовался** (torch CPU).
 * **Шаблонный детектор не умеет:**
   - клемма XT (`terminal`, `template_detect=False`);
   - УГО вне библиотеки (лампы-радиолампы, многообмоточные реле, DD/DA,
@@ -196,8 +199,7 @@ venv\Scripts\python.exe scripts\check_model_backend.py weights.pt    # пров�
    в первую очередь.
 
 ### B. Обучение на GPU (можно делать без реальных данных)
-1. Согласовать с пользователем установку torch CUDA 12.8 в общий venv
-   (раздел 2) или сделать отдельный venv для обучения.
+1. ~~torch с CUDA~~ — сделано 16.10 (cu130, раздел 2).
 2. `cli generate-v2 -o data\synth_v2 --num-train 3000 --num-val 300
    --workers 8` (около 40 тыс. тайлов; `data/synth_v2` добавить в
    `.gitignore`).
@@ -282,9 +284,8 @@ venv\Scripts\python.exe scripts\check_model_backend.py weights.pt    # пров�
 
 ## 8. Git
 
-Коммиты сессий 15–16.10 лежат в worktree OpenCode (detached HEAD) поверх
-`730215a`. Ветка для push не согласована: `AGENTS.md` называет
-`arena/01a0fbb1-avers`, этот файл — `main`. Перед push спросить
-пользователя. Перенести в основную копию можно так:
-`git -C C:\github\AVERS fetch <путь worktree> HEAD` и затем merge или
-cherry-pick.
+Работа идёт в `main` (push в `origin/main`), 16.10 подтверждено
+пользователем. Указание в `AGENTS.md` про ветку `arena/01a0fbb1-avers`
+устарело. Сессии OpenCode могут работать в отдельном worktree (detached
+HEAD): push делать `git push origin HEAD:main`, затем в основной копии
+`git -C C:\github\AVERS merge --ff-only origin/main`.
