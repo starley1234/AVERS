@@ -264,6 +264,35 @@ class TestProductionPipeline:
         assert isinstance(result.manifest, AVERSManifest)
 
 
+class TestRealSheetClasses:
+    """Классы, добавленные по реальным листам БКС (v0.5): fuse_switch,
+    device_block. Проверяем, что детекции этих классов доходят до компонентов
+    с правильным типом и обозначением."""
+
+    def test_fuse_switch_and_device_block_become_components(self):
+        from avers.core.types import CLASS_TO_COMPONENT_TYPE, ComponentType
+
+        pipeline = ProductionPipeline()
+        detections = [
+            {"category": "fuse_switch", "bbox": (10, 10, 60, 180), "confidence": 0.9,
+             "pins": [{"name": "1", "coord": (35, 10)}, {"name": "2", "coord": (35, 180)}]},
+            {"category": "device_block", "bbox": (0, 0, 400, 400), "confidence": 0.8,
+             "pins": []},
+        ]
+        comps = pipeline._components_with_pins(detections)
+        by_class = {c.text_associations.get("gost_class"): c for c in comps}
+
+        assert set(by_class) == {"fuse_switch", "device_block"}
+        assert by_class["fuse_switch"].type == ComponentType.FUSE
+        assert by_class["fuse_switch"].designator.startswith("F")
+        assert len(by_class["fuse_switch"].pins) == 2
+        # блок изделия - не элемент цепи: без выводов, тип unknown
+        assert by_class["device_block"].type == ComponentType.UNKNOWN
+        assert by_class["device_block"].pins == []
+        assert by_class["device_block"].designator.startswith("A")
+        assert set(CLASS_TO_COMPONENT_TYPE) >= {"fuse_switch", "device_block"}
+
+
 class TestConvenienceFunctions:
     """Tests for convenience functions."""
     
