@@ -73,9 +73,14 @@ def train_yolo(
     device: str = "cuda",
     project: str = "/tmp/avers_runs",
     export_onnx: bool = False,
+    resume: bool = False,
     **kwargs
 ):
-    """Обучить YOLO модель."""
+    """Обучить YOLO модель.
+
+    ``resume=True`` - продолжить прерванный прогон: ``model_name`` должен
+    указывать на ``last.pt`` этого прогона (эпоха, оптимизатор и расписание
+    восстанавливаются из самого чекпойнта)."""
     try:
         from ultralytics import YOLO
     except ImportError:
@@ -86,6 +91,12 @@ def train_yolo(
     
     model = YOLO(model_name)
     
+    if resume:
+        logger.info(f"Resume training from {model_name} (аргументы берутся из чекпойнта)")
+        results = model.train(resume=True)
+        logger.info(f"Training complete. Best model: {results}")
+        return results
+
     config = get_training_config("yolo")
     # явные аргументы перекрывают значения конфига (раньше передавались дважды:
     # TypeError "multiple values for keyword argument 'epochs'")
@@ -122,9 +133,10 @@ def train_rtdetr(
     device: str = "cuda",
     project: str = "/tmp/avers_runs",
     export_onnx: bool = False,
+    resume: bool = False,
     **kwargs
 ):
-    """Обучить RT-DETR модель."""
+    """Обучить RT-DETR модель (``resume`` - см. ``train_yolo``)."""
     try:
         from ultralytics import RTDETR
     except ImportError:
@@ -135,6 +147,12 @@ def train_rtdetr(
     
     model = RTDETR(model_name)
     
+    if resume:
+        logger.info(f"Resume training from {model_name} (аргументы берутся из чекпойнта)")
+        results = model.train(resume=True)
+        logger.info(f"Training complete. Best model: {results}")
+        return results
+
     config = get_training_config("rtdetr")
     config.update(kwargs)
     config.update(epochs=epochs, imgsz=imgsz, batch=batch, device=device)

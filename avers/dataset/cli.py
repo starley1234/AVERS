@@ -71,6 +71,9 @@ def cmd_train(args):
         # yolo11n/s/m/l/x -> yolo11s.pt и т.д. (раньше любой «не x» становился yolo11m)
         default = f"{model_type}.pt" if model_type[-1:] in "nsmlx" and model_type[-2:-1].isdigit() else "yolo11m.pt"
         model_name = args.pretrained or default
+        if args.resume and not args.pretrained:
+            logger.error("Для --resume нужен --pretrained с путём к last.pt прерванного прогона")
+            return 1
         train_yolo(
             data_yaml=data_yaml,
             model_name=model_name,
@@ -79,9 +82,13 @@ def cmd_train(args):
             imgsz=args.imgsz,
             device=args.device,
             project=args.project,
+            resume=args.resume,
         )
     elif "rtdetr" in model_type or "detr" in model_type:
         model_name = args.pretrained or ("rtdetr-x.pt" if "x" in model_type else "rtdetr-l.pt")
+        if args.resume and not args.pretrained:
+            logger.error("Для --resume нужен --pretrained с путём к last.pt прерванного прогона")
+            return 1
         train_rtdetr(
             data_yaml=data_yaml,
             model_name=model_name,
@@ -90,6 +97,7 @@ def cmd_train(args):
             imgsz=args.imgsz,
             device=args.device,
             project=args.project,
+            resume=args.resume,
         )
     else:
         logger.error(f"Unknown model type: {model_type}")
@@ -254,6 +262,8 @@ def main():
     train_parser.add_argument("--device", type=str, default="cuda", help="Device")
     train_parser.add_argument("--project", type=str, default="/tmp/avers_runs", help="Project dir")
     train_parser.add_argument("--pretrained", type=str, default=None, help="Pretrained weights")
+    train_parser.add_argument("--resume", action="store_true",
+                              help="Продолжить прерванный прогон (--pretrained = путь к last.pt)")
     
     # Export
     export_parser = subparsers.add_parser("export", help="Export dataset")

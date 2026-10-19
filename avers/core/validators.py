@@ -217,6 +217,48 @@ _EASYOCR_READERS: Dict[Tuple[str, ...], Any] = {}
 _EASYOCR_LOCK = threading.Lock()
 
 
+def _ocr_tiles(w: int, h: int, canvas: int, overlap: float = 0.12) -> List[Tuple[int, int, int, int]]:
+    """Тайлы листа не больше ``canvas`` по длинной стороне (с перекрытием).
+
+    EasyOCR уменьшает картинку до ``canvas_size`` по длинной стороне, поэтому на
+    листе А1 (скан 300 dpi, 8837 px) подписи становятся нечитаемыми. Лист шире
+    канвы читается кусками, координаты потом сдвигаются на место.
+    """
+    def starts(size: int) -> List[int]:
+        if size <= canvas:
+            return [0]
+        step = max(1, int(canvas * (1.0 - overlap)))
+        s = list(range(0, size - canvas, step))
+        if s[-1] != size - canvas:
+            s.append(size - canvas)
+        return sorted(set(s))
+
+    return [(x, y, min(w, x + canvas), min(h, y + canvas))
+            for y in starts(h) for x in starts(w)]
+
+
+def _dedupe_texts(texts: List[Dict[str, Any]], iou: float = 0.5) -> List[Dict[str, Any]]:
+    """Склейка текстов с перекрывающихся тайлов: подпись на шве читается дважды,
+    в результат должен попасть один экземпляр (самый уверенный)."""
+    out: List[Dict[str, Any]] = []
+    for t in sorted(texts, key=lambda x: -float(x.get("confidence", 0))):
+        duplicate = False
+        for k in out:
+            if k["text"] != t["text"]:
+                continue
+            a, b = t["bbox"], k["bbox"]
+            ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+            iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+            inter = ix * iy
+            union = ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter)
+            if union and inter / union >= iou:
+                duplicate = True
+                break
+        if not duplicate:
+            out.append(t)
+    return out
+
+
 def _get_easyocr_reader(langs: Tuple[str, ...]):
     """Process-wide EasyOCR reader (first call downloads/loads the models)."""
     with _EASYOCR_LOCK:
@@ -353,28 +395,33 @@ class SchematicOCR:
                                        or (short.isdigit() and len(short) <= 3))
 
     def _easyocr_recognize(self, image: np.ndarray) -> List[Dict[str, Any]]:
-        """EasyOCR recognition."""
-        # EasyOCR shrinks images to canvas_size (2560 px) by default, which
-        # makes the labels of a large sheet unreadable; keep up to 4096 px.
+        """EasyOCR recognition.
+
+        EasyOCR shrinks images to ``canvas_size`` on the long side, which makes
+        the labels of a large sheet unreadable. Sheets larger than the canvas
+        are read as overlapping tiles (see ``_ocr_tiles``) and merged.
+        """
         canvas = int(min(4096, max(2560, max(image.shape[:2]))))
-        with _EASYOCR_LOCK:  # the cached reader is shared between requests
-            results = self._ocr.readtext(image, canvas_size=canvas)
-        
+        h, w = image.shape[:2]
+        tiles = _ocr_tiles(w, h, canvas)
         texts = []
-        for bbox, text, confidence in results:
-            if not self._keep(text, float(confidence)):
-                continue
-            
-            x_coords = [p[0] for p in bbox]
-            y_coords = [p[1] for p in bbox]
-            
-            texts.append({
-                "text": text.strip(),
-                "bbox": (int(min(x_coords)), int(min(y_coords)),
-                        int(max(x_coords)), int(max(y_coords))),
-                "confidence": confidence,
-            })
-        
+        for x0, y0, x1, y1 in tiles:
+            with _EASYOCR_LOCK:  # the cached reader is shared between requests
+                results = self._ocr.readtext(image[y0:y1, x0:x1], canvas_size=canvas)
+            for bbox, text, confidence in results:
+                if not self._keep(text, float(confidence)):
+                    continue
+                x_coords = [p[0] for p in bbox]
+                y_coords = [p[1] for p in bbox]
+                texts.append({
+                    "text": text.strip(),
+                    "bbox": (int(min(x_coords)) + x0, int(min(y_coords)) + y0,
+                             int(max(x_coords)) + x0, int(max(y_coords)) + y0),
+                    "confidence": float(confidence),
+                })
+        if len(tiles) > 1:
+            logger.info(f"EasyOCR: {len(tiles)} tiles of {canvas} px, {len(texts)} raw texts")
+            texts = _dedupe_texts(texts)
         return texts
     
     DESIGNATOR_CHARS = "ABCDEFGHKLMPQRSTUVWXYZ0123456789."

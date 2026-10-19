@@ -3,13 +3,14 @@
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
 from avers.core.types import DETECTION_CLASSES
 from avers.dataset.gost_symbols import GOST_SYMBOLS
 from avers.dataset.schematic_gen import (
-    GenConfig, degrade, export_yolo_dataset, generate_sheet, sheet_issues, yolo_boxes,
+    GenConfig, dataset_sheet, degrade, export_yolo_dataset, generate_sheet, sheet_issues, yolo_boxes,
 )
 
 
@@ -115,6 +116,19 @@ def test_yolo_export(tmp_path):
     stats = json.loads((tmp_path / "stats.json").read_text(encoding="utf-8"))
     assert stats["objects"] == len(rows) + sum(
         len(Path(p).read_text().splitlines()) for p in (tmp_path / "labels" / "val").glob("*.txt"))
+
+
+def test_dataset_sheet_matches_export(tmp_path):
+    """``scripts/eval_model.py`` воспроизводит лист датасета по seed: и картинка,
+    и эталон из ``truth/val`` - те же, что у обученной модели на валидации."""
+    export_yolo_dataset(tmp_path, num_train=1, num_val=1, seed=0, tile=0, ext="jpg")
+    for split, seed in (("train", 0), ("val", 1_000_000)):
+        saved = cv2.imread(str(tmp_path / "sheets" / split / f"s{seed:07d}.png"))
+        rgb, truth = dataset_sheet(seed, GenConfig(), 0.7)
+        assert np.array_equal(saved[:, :, ::-1], rgb)
+        stored = json.loads((tmp_path / "truth" / split / f"s{seed:07d}.json").read_text(encoding="utf-8"))
+        assert stored["nets"] == truth["nets"]
+        assert len(stored["components"]) == len(truth["components"])
 
 
 def test_yolo_boxes_include_dots():

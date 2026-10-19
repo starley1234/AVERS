@@ -1111,6 +1111,20 @@ def generate_sheet(seed: int = 0, config: Optional[GenConfig] = None) -> Tuple[n
     return gen.render()
 
 
+def dataset_sheet(seed: int, config: Optional[GenConfig] = None, degrade_p: float = 0.7
+                  ) -> Tuple[np.ndarray, Dict]:
+    """Лист + эталон ровно так, как он попал в YOLO-датасет (``export_yolo_dataset``).
+
+    Эффекты скана включаются с вероятностью ``degrade_p`` от того же генератора,
+    что и в датасете, поэтому по одному ``seed`` лист воспроизводится бит-в-бит.
+    Нужен оценщику модели на листах ``truth/val``."""
+    rgb, truth = generate_sheet(seed, config)
+    r = np.random.default_rng(seed + 7_000_000)
+    if r.random() < degrade_p:
+        rgb, truth = degrade(rgb, truth, seed=seed, strength=float(r.uniform(0.5, 1.2)))
+    return rgb, truth
+
+
 # =============================================================================
 # Эффекты скана
 # =============================================================================
@@ -1230,14 +1244,16 @@ def _yolo_line(cid: int, box: Box, w: int, h: int) -> str:
 def _export_one(args) -> Dict[str, int]:
     (seed, split, out, tile, overlap, ext, degrade_p, cfg_dict, keep_empty) = args
     cfg = GenConfig(**cfg_dict) if cfg_dict else GenConfig()
-    rgb, truth = generate_sheet(seed, cfg)
+    rgb, truth = dataset_sheet(seed, cfg, degrade_p)
     r = np.random.default_rng(seed + 7_000_000)
-    if r.random() < degrade_p:
-        rgb, truth = degrade(rgb, truth, seed=seed, strength=float(r.uniform(0.5, 1.2)))
     out = Path(out)
     stem = f"s{seed:07d}"
     (out / "truth" / split).mkdir(parents=True, exist_ok=True)
     (out / "truth" / split / f"{stem}.json").write_text(json.dumps(truth, ensure_ascii=False), encoding="utf-8")
+    # Целый лист (не тайл): нужен оценщику обученной модели на true-листах.
+    sheet_path = out / "sheets" / split / f"{stem}.png"
+    sheet_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(sheet_path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
     boxes = yolo_boxes(truth)
     pieces = tile_sheet(rgb, boxes, tile, overlap) if tile else [(rgb, boxes)]
     stats = {"images": 0, "objects": 0}

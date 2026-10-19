@@ -77,6 +77,40 @@ class TestSchematicOCR:
         assert isinstance(results, list)
 
 
+class TestOcrTiling:
+    """Большие листы (А1/300 dpi) читаются кусками, а не уменьшаются до канвы."""
+
+    def test_tiles_cover_sheet_and_fit_canvas(self):
+        from avers.core.validators import _ocr_tiles
+
+        tiles = _ocr_tiles(8837, 3120, canvas=4096)
+        assert all(x1 - x0 <= 4096 and y1 - y0 <= 4096 for x0, y0, x1, y1 in tiles)
+        assert tiles[0][0] == 0 and tiles[0][1] == 0
+        assert max(x1 for _, _, x1, _ in tiles) == 8837
+        assert max(y1 for _, _, _, y1 in tiles) == 3120
+        # лист из двух тайлов - по одной полосе, слева и справа от шва
+        strip = _ocr_tiles(5000, 1000, canvas=4096)
+        assert len(strip) == 2 and strip[0][0] == 0 and strip[1][2] == 5000
+
+    def test_small_sheet_is_one_tile(self):
+        from avers.core.validators import _ocr_tiles
+
+        assert _ocr_tiles(2560, 1815, canvas=2560) == [(0, 0, 2560, 1815)]
+
+    def test_dedupe_keeps_one_copy_of_seam_text(self):
+        from avers.core.validators import _dedupe_texts
+
+        texts = [
+            {"text": "R1", "bbox": (4000, 100, 4096, 130), "confidence": 0.9},
+            {"text": "R1", "bbox": (4005, 101, 4098, 131), "confidence": 0.7},
+            {"text": "R1", "bbox": (100, 100, 140, 130), "confidence": 0.8},
+            {"text": "C2", "bbox": (4000, 100, 4096, 130), "confidence": 0.5},
+        ]
+        out = _dedupe_texts(texts)
+        assert [t["text"] for t in out] == ["R1", "R1", "C2"]
+        assert out[0]["confidence"] == 0.9  # остаётся самый уверенный экземпляр
+
+
 class TestWireVectorizer:
     """Tests for WireVectorizer."""
     
