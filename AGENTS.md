@@ -41,6 +41,14 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
   Новые классы
   добавляйте в `GOST_SYMBOLS` и зеркально в `avers/core/types.py::DETECTION_CLASSES`
   (это проверяет тест).
+- **v0.5 (эта правка): обученная модель YOLO11s на синтетике v2 и символы с
+  реальных листов.** Библиотека УГО — 33 класса: добавлены `fuse_switch`
+  (предохранитель с ножом) и `device_block` (штриховой контур блока изделия),
+  у `lamp` появился второй вариант исполнения (окружность с треугольником).
+  В генераторе — длинные разъёмы-таблицы (10–24 контакта) и рамки блоков
+  вокруг групп. Обучение и прогон по реальным листам:
+  `docs/TRAINED_MODEL_RESULTS.md`, `docs/REAL_SCHEMATICS_RESULTS.md`.
+  Датасет `data/synth_v3`, веса `data/out_real/yolo11s_synth_v3*.pt`.
 - Каталог реальных (не синтетических) референсных схем для обучения:
   `data/reference_schematics/` + `docs/REAL_SCHEMATICS_SOURCES.md`.
 

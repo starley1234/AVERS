@@ -387,6 +387,21 @@ def _draw_lamp(img, bbox, **kwargs):
     return img
 
 
+def _draw_lamp_triangle(img, bbox, **kwargs):
+    """Лампа, второй вариант исполнения: окружность с треугольной нитью накала.
+
+    Именно так нарисованы лампы H1/H2 на реальных листах БКС; модель принимала
+    их за транзистор в корпусе (в библиотеке был только крест). Выводы те же,
+    что у ``_draw_lamp``, поэтому ориентации и выводы не меняются.
+    """
+    p = _pen(img, bbox, (14, 8), kwargs)
+    p.line((0, 4), (3, 4))
+    p.circle((7, 4), 4)
+    p.polyline([(5.1, 6.4), (8.9, 6.4), (7.0, 2.6)], closed=True)
+    p.line((11, 4), (14, 4))
+    return img
+
+
 def _draw_inductor(img, bbox, **kwargs):
     """Катушка индуктивности, обмотка (ГОСТ 2.723-68): четыре полуокружности."""
     p = _pen(img, bbox, (18, 2.5), kwargs)
@@ -494,6 +509,35 @@ def _draw_terminal(img, bbox, **kwargs):
     return img
 
 
+def _draw_fuse_switch(img, bbox, **kwargs):
+    """Предохранитель с ножом (разъединитель плавкий, ГОСТ 2.727-68).
+
+    Так он нарисован на реальных схемах соединений БКС (Э3): узкий
+    вертикальный корпус, внутри наклонный нож на оси, выводы сверху и снизу.
+    В библиотеке был только «прямоугольник с проводником» - из-за этого
+    модель на реальных листах принимала нож за контакт выключателя.
+    """
+    p = _pen(img, bbox, (5, 16), kwargs)
+    p.line((2.5, 0), (2.5, 2.5))
+    p.rect((0.8, 2.5), (4.2, 13.5))
+    p.line((2.5, 13.5), (2.5, 16))
+    # нож на оси: нижняя ось, наклонная пластина вверх
+    p.line((2.5, 11.6), (3.4, 4.6), thick=1.4)
+    p.circle((2.5, 11.6), 0.45, fill=True)
+    p.circle((3.4, 4.6), 0.55, fill=True)
+    return img
+
+
+def _draw_device_block(img, bbox, **kwargs):
+    """Блок изделия: штриховой контур, внутри которого размещены его элементы
+    (на схемах соединений БКС так обведены блоки «Ы441», «ЫЧОС» и подобные)."""
+    p = _pen(img, bbox, (40, 30), kwargs)
+    for a, b in (((0, 0), (40, 0)), ((40, 0), (40, 30)),
+                 ((40, 30), (0, 30)), ((0, 30), (0, 0))):
+        p.dashed(a, b, dash=0.55, gap=0.35)
+    return img
+
+
 # =============================================================================
 # Реестр ГОСТ символов
 # =============================================================================
@@ -582,7 +626,28 @@ GOST_SYMBOLS: Dict[int, GOSTSymbol] = {
              (("1", 0, 1.2),), "XT", "terminal", "_draw_terminal", template_detect=False),
     30: _sym(30, "chassis", "ГОСТ 2.721-74", "Соединение с корпусом (масса)", (10, 6), (("1", 5, 0),),
              "", "chassis", "_draw_chassis"),
+    # --- v0.5: символы реальных схем соединений БКС (data/2026_10) ---
+    31: _sym(31, "fuse_switch", "ГОСТ 2.727-68", "Предохранитель с ножом (разъединитель плавкий)",
+              (5, 16), (("1", 2.5, 0), ("2", 2.5, 16)), "F", "fuse", "_draw_fuse_switch",
+              template_detect=False),
+    32: _sym(32, "device_block", "ГОСТ 2.701-2008", "Блок изделия (штриховой контур)",
+              (40, 30), (), "A", "unknown", "_draw_device_block", template_detect=False),
 }
+
+# Варианты исполнения одного и того же УГО (первый - основной, он же в шаблоне).
+# Позиционное обозначение и выводы у вариантов совпадают: класс остаётся один.
+SYMBOL_VARIANTS: Dict[str, Tuple[str, ...]] = {
+    "lamp": ("_draw_lamp", "_draw_lamp_triangle"),
+}
+
+
+def variant_draw_fn(class_name: str, variant: int = 0) -> Optional[str]:
+    """Имя функции отрисовки варианта УГО (``variant=0`` - основной)."""
+    names = SYMBOL_VARIANTS.get(class_name)
+    if not names:
+        return None
+    return names[variant % len(names)]
+
 
 # Маппинг имени функции к реальному callable
 DRAW_FUNCTIONS: Dict[str, Callable[..., np.ndarray]] = {
@@ -601,9 +666,14 @@ EXTENDED_SYMBOLS = {
 }
 
 
-def draw_symbol(img: np.ndarray, symbol: GOSTSymbol, bbox: Tuple[int, int, int, int], **kwargs) -> np.ndarray:
-    """Отрисовать символ в изображении."""
-    fn_name = symbol.draw_fn
+def draw_symbol(img: np.ndarray, symbol: GOSTSymbol, bbox: Tuple[int, int, int, int],
+                draw_fn: Optional[str] = None, **kwargs) -> np.ndarray:
+    """Отрисовать символ в изображении.
+
+    ``draw_fn`` позволяет нарисовать вариант исполнения того же класса
+    (см. ``SYMBOL_VARIANTS``); по умолчанию - основной.
+    """
+    fn_name = draw_fn or symbol.draw_fn
     if fn_name and fn_name in DRAW_FUNCTIONS:
         return DRAW_FUNCTIONS[fn_name](img, bbox, **kwargs)
     # Fallback: простой прямоугольник

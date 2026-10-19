@@ -22,13 +22,13 @@
 | Стадия | Чем сделано | Статус |
 |---|---|---|
 | OCR | EasyOCR + `avers/core/designators.py` (ГОСТ 2.710, `K1.1`, повторный проход). С 16.10 выполняется **до** детекции | работает |
-| Детекция УГО | `GOSTTemplateDetector`: шаблоны библиотеки ГОСТ (31 класс), оценка масштаба, различение близнецов | работает |
+| Детекция УГО | `GOSTTemplateDetector`: шаблоны библиотеки ГОСТ (33 класса), оценка масштаба, различение близнецов | работает |
 | Разъёмы-таблицы, точки соединения, сетки-таблицы | там же | работает |
 | Векторизация проводов | `WireVectorizer` (Otsu → скелет → Hough → продление по штриху) | работает |
 | Граф / netlist | `GraphBuilder` + мосты между соседними выводами (`_pin_bridges`) | работает |
 | Генератор схем v2 + датасет YOLO | `avers/dataset/schematic_gen.py`, `cli generate-v2` | работает |
-| Обучение | `avers/dataset/train.py`, `cli train` | исправлено, проверено 1 эпохой на CPU |
-| Обученные веса | `UltralyticsTiledDetector` + гибрид `refine()` | подключено, **модели нет** |
+| Обучение | `avers/dataset/train.py`, `cli train` (+`--resume`) | работает, YOLO11s обучен на GPU |
+| Обученные веса | `UltralyticsTiledDetector` + гибрид `refine()` | подключено, веса `data/out_real/yolo11s_synth_v3*.pt` |
 | Web UI, PDF, экспорт | FastAPI `avers/web` | работает |
 
 ### Измерения
@@ -102,7 +102,7 @@ venv\Scripts\python.exe scripts\check_model_backend.py weights.pt    # пров�
 ## 3. Что сделано
 
 ### Сессии 07–08.10.2026
-* Библиотека УГО на 31 класс по ЕСКД.
+* Библиотека УГО на 33 класса по ЕСКД (v0.5: +`fuse_switch`, +`device_block`).
 * Шаблонный CPU-детектор, демо-схема с эталоном.
 * OCR обозначений.
 * Подключение ultralytics с тайлами и гибридом.

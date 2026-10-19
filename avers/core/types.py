@@ -354,6 +354,8 @@ DETECTION_CLASSES = {
     28: "socket_contact",
     29: "terminal",
     30: "chassis",
+    31: "fuse_switch",
+    32: "device_block",
 }
 
 CLASS_TO_COMPONENT_TYPE = {
@@ -388,4 +390,6 @@ CLASS_TO_COMPONENT_TYPE = {
     "socket_contact": ComponentType.SOCKET,
     "terminal": ComponentType.TERMINAL,
     "chassis": ComponentType.CHASSIS,
+    "fuse_switch": ComponentType.FUSE,
+    "device_block": ComponentType.UNKNOWN,  # контур блока: не элемент цепи
 }

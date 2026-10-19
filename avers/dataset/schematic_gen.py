@@ -43,19 +43,21 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import cv2
 import numpy as np
 
-from avers.dataset.gost_symbols import GOST_SYMBOLS, GOSTSymbol, draw_symbol, get_symbol_by_name
+from avers.dataset.gost_symbols import (
+    GOST_SYMBOLS, GOSTSymbol, SYMBOL_VARIANTS, draw_symbol, get_symbol_by_name, variant_draw_fn,
+)
 
 Pt = Tuple[int, int]
 Box = Tuple[int, int, int, int]
 
 # --- наборы классов ----------------------------------------------------------
 # Двухвыводные, которые ставят в разрыв шины (горизонтально).
-INLINE_2PIN = ("fuse", "switch_no", "switch_nc", "pushbutton_no", "resistor", "inductor",
+INLINE_2PIN = ("fuse", "fuse_switch", "switch_no", "switch_nc", "pushbutton_no", "resistor", "inductor",
                "diode", "zener", "capacitor", "led", "relay", "lamp")
 # Двухвыводные в ветвях (вертикально).
 BRANCH_2PIN = ("resistor", "capacitor", "capacitor_polar", "lamp", "led", "motor", "generator",
                "relay", "diode", "zener", "inductor", "switch_no", "switch_nc", "pushbutton_no",
-               "fuse", "battery")
+               "fuse", "fuse_switch", "battery")
 THREE_PIN = ("transistor_npn", "transistor_pnp", "potentiometer", "switch_changeover")
 # Однополюсные «концы» цепей.
 TERMINALS = ("ground", "chassis", "offpage_connector", "plug_contact", "socket_contact", "terminal")
@@ -88,6 +90,8 @@ class GenConfig:
     value_label_p: float = 0.35                          # номиналы под обозначением
     connector_numbers_p: float = 0.8
     only_template_classes: bool = False                  # только классы шаблонного детектора
+    tall_table_p: float = 0.3                            # длинные таблицы разъёмов (на весь лист)
+    device_block_p: float = 0.35                         # штриховой контур блока изделия
 
 
 # =============================================================================
@@ -112,6 +116,7 @@ class SymGeom:
     h: int
     pins: Dict[str, Pt]
     canvas: np.ndarray  # BGR, белый фон
+    variant: int = 0    # вариант исполнения УГО (см. gost_symbols.SYMBOL_VARIANTS)
 
     def edge(self, name: str) -> str:
         x, y = self.pins[name]
@@ -122,8 +127,9 @@ class SymGeom:
 _GEOM_CACHE: Dict[Tuple, SymGeom] = {}
 
 
-def sym_geom(cls: str, rotation: int, mirror: bool, ppm: float, line: int) -> SymGeom:
-    key = (cls, rotation % 4, mirror, round(ppm, 3), line)
+def sym_geom(cls: str, rotation: int, mirror: bool, ppm: float, line: int,
+             variant: int = 0) -> SymGeom:
+    key = (cls, rotation % 4, mirror, round(ppm, 3), line, variant)
     g = _GEOM_CACHE.get(key)
     if g is not None:
         return g
@@ -131,7 +137,8 @@ def sym_geom(cls: str, rotation: int, mirror: bool, ppm: float, line: int) -> Sy
     w = int(round(sym.size_mm[0] * ppm)) + 1
     h = int(round(sym.size_mm[1] * ppm)) + 1
     canvas = np.full((h, w, 3), 255, np.uint8)
-    draw_symbol(canvas, sym, (0, 0, w - 1, h - 1), thickness=line)
+    draw_symbol(canvas, sym, (0, 0, w - 1, h - 1), thickness=line,
+                draw_fn=variant_draw_fn(cls, variant))
     pins = list(sym.pins_in_bbox((0, 0, w - 1, h - 1)))
     if mirror:
         canvas = canvas[:, ::-1]
@@ -140,7 +147,7 @@ def sym_geom(cls: str, rotation: int, mirror: bool, ppm: float, line: int) -> Sy
     if rotation % 4:
         canvas = np.rot90(canvas, rotation % 4)
     canvas = np.ascontiguousarray(canvas)
-    g = SymGeom(cls, rotation % 4, mirror, canvas.shape[1], canvas.shape[0], dict(pins), canvas)
+    g = SymGeom(cls, rotation % 4, mirror, canvas.shape[1], canvas.shape[0], dict(pins), canvas, variant)
     if len(_GEOM_CACHE) > 4000:
         _GEOM_CACHE.clear()
     _GEOM_CACHE[key] = g
@@ -250,6 +257,7 @@ class Plan:
     dots: List[Pt] = field(default_factory=list)
     labels: List[PLabel] = field(default_factory=list)
     links: List[Tuple[str, str]] = field(default_factory=list)   # электрические связи узлов
+    blocks: List[Tuple[Box, str]] = field(default_factory=list)  # контуры блоков изделия
 
     def extend(self, other: "Plan") -> None:
         self.syms += other.syms
@@ -258,6 +266,7 @@ class Plan:
         self.dots += other.dots
         self.labels += other.labels
         self.links += other.links
+        self.blocks += other.blocks
 
     def boxes(self, wires: bool = True) -> List[Box]:
         out = [s.box for s in self.syms] + [t.box for t in self.tables] + [lb.box for lb in self.labels]
@@ -269,7 +278,7 @@ class Plan:
         return out
 
     def bounds(self, wires: bool = True) -> Optional[Box]:
-        bs = self.boxes(wires)
+        bs = self.boxes(wires) + [b for b, _ in self.blocks]
         if not bs:
             return None
         return (min(b[0] for b in bs), min(b[1] for b in bs), max(b[2] for b in bs), max(b[3] for b in bs))
@@ -286,11 +295,33 @@ class Plan:
         for lb in self.labels:
             lb.org = (lb.org[0] + dx, lb.org[1] + dy)
             lb.box = (lb.box[0] + dx, lb.box[1] + dy, lb.box[2] + dx, lb.box[3] + dy)
+        self.blocks = [((b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy), d) for b, d in self.blocks]
         return self
 
 
 def _boxes_hit(a: Box, b: Box, pad: int = 0) -> bool:
     return not (a[2] + pad < b[0] or b[2] + pad < a[0] or a[3] + pad < b[1] or b[3] + pad < a[1])
+
+
+def _dashed_rect(img: np.ndarray, box: Box, thickness: int, dash: int, gap: int) -> None:
+    """Штриховой прямоугольник в пикселях - контур блока изделия.
+
+    Рисуется не через ``_Pen``: у блока стороны разной длины, и штрих в
+    миллиметрах символа получался бы на широкой стороне в разы длиннее.
+    """
+    x0, y0, x1, y1 = box
+    for a, b in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)),
+                 ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
+        length = math.hypot(b[0] - a[0], b[1] - a[1])
+        if not length:
+            continue
+        ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+        s = 0.0
+        while s < length:
+            e = min(length, s + dash)
+            cv2.line(img, (int(a[0] + ux * s), int(a[1] + uy * s)),
+                     (int(a[0] + ux * e), int(a[1] + uy * e)), (0, 0, 0), thickness, cv2.LINE_AA)
+            s = e + gap
 
 
 # =============================================================================
@@ -399,8 +430,12 @@ class SchematicGenerator:
         self.class_counts[cls] = self.class_counts.get(cls, 0) + 1
 
     def put(self, plan: Plan, cls: str, rot: int, mir: bool, pin: str, at: Pt,
-            label_side: Optional[str] = None, value: bool = True) -> PSym:
-        g = sym_geom(cls, rot, mir, self.ppm, self.line)
+            label_side: Optional[str] = None, value: bool = True,
+            variant: Optional[int] = None) -> PSym:
+        if variant is None:
+            names = SYMBOL_VARIANTS.get(cls)
+            variant = int(self.rng.integers(len(names))) if names else 0
+        g = sym_geom(cls, rot, mir, self.ppm, self.line, variant)
         px, py = g.pins[pin]
         des = self.designator(cls)
         s = PSym(g, at[0] - px, at[1] - py, des)
@@ -430,7 +465,8 @@ class SchematicGenerator:
         table = {
             "resistor": [f"{v}k" for v in (1, 2.2, 4.7, 10, 47)] + ["330", "1.5k"],
             "capacitor": ["0.1u", "10n", "1u", "470p"], "capacitor_polar": ["100u", "47u", "1000u"],
-            "fuse": ["5A", "10A", "15A", "2A"], "lamp": ["12V 21W", "27V 5W", "A12-5"],
+            "fuse": ["5A", "10A", "15A", "2A"], "fuse_switch": ["2A", "5A", "10A", "16A"],
+            "lamp": ["12V 21W", "27V 5W", "A12-5"],
             "relay": ["12V", "27V"], "motor": ["12V", "27V 40W"], "inductor": ["10mH", "100uH"],
             "battery": ["12V", "24V"], "generator": ["14V", "28V"],
         }
@@ -535,9 +571,18 @@ class SchematicGenerator:
         """Таблица разъёма в разрыве шины: шина проходит через контакт k."""
         plan = Plan()
         r = self.rng
-        cells = int(r.integers(2, 9))
-        cell_h = self.mm(6, 8.5)
-        cell_w = self.mm(7, 10)
+        tall = r.random() < self.cfg.tall_table_p and not self.cfg.only_template_classes
+        if tall:
+            # длинный разъём-таблица: на реальных листах это столбец на 10-25
+            # контактов почти на всю высоту листа (X1...X4 в Э3 - 1.jpg)
+            cells = int(r.integers(10, 25))
+            cell_h = self.mm(3.6, 5.2)
+            cell_w = self.mm(6, 9)
+        else:
+            cells = int(r.integers(2, 9))
+            cell_h = self.mm(6, 8.5)
+            cell_w = self.mm(7, 10)
+        side_p = 0.3 if not tall else 0.12
         k = int(r.integers(1, cells + 1))
         des = self.designator("connector_body")
         t = PTable(des, 0, -((k - 1) * cell_h + cell_h // 2), cell_w, cell_h, cells,
@@ -556,7 +601,7 @@ class SchematicGenerator:
                     continue  # рядом с шиной справа тесно
                 if i - last[side] == 1:
                     continue  # соседние отводы с одной стороны: УГО налезут друг на друга
-                if r.random() < 0.3:
+                if r.random() < side_p:
                     last[side] = i
                     p = t.pin(i, side)
                     d = -1 if side == "L" else 1
@@ -667,7 +712,9 @@ class SchematicGenerator:
                 dx = max(dx, cursor[0] + self.mm(4) - entry[0])
             sp.shift(dx, 0)
             nb = sp.bounds()
-            if nb[2] > x_limit:
+            # оставляем место на конце шины для вывода/обрыва (~28 мм), иначе
+            # последний вывод элемента остаётся ни к чему не подключённым
+            if nb[2] > x_limit - self.mm(28):
                 self._rollback(sp)
                 break
             n_slots += 1
@@ -797,8 +844,26 @@ class SchematicGenerator:
                     right = min(right, tb[0] - self.mm(5))
                 continue
             self._commit_rail_segments(dx, dy)
+            # штриховой контур блока изделия вокруг группы (как «Ы441» на реальных листах)
+            block_box = None
+            if (not self.cfg.only_template_classes) and r.random() < self.cfg.device_block_p:
+                pad_x = self.mm(6, 10)
+                pad_top = self.mm(10, 14)
+                # отступы обрезаем по рабочему полю: группа может занимать его
+                # целиком, но контур блока всё равно должен остаться на листе
+                bb = (max(ax0, gb[0] - pad_x), max(ay0, gb[1] - pad_top),
+                      min(ax1, gb[2] + pad_x), min(ay1, gb[3] + self.mm(6, 10)))
+                if not (tb and _boxes_hit(bb, tb, self.mm(3))):
+                    des = self.designator("device_block")
+                    g.blocks.append((bb, des))
+                    band = min(bb[3] - self.mm(4), bb[1] + max(self.mm(4), pad_top // 2))
+                    g.labels.append(self.label(des, (bb[0] + self.mm(2), band,
+                                                     bb[0] + self.mm(30), band), "top"))
+                    self.count("device_block")
+                    block_box = bb
             self.plan.extend(g)
-            y = gb[3] + self.mm(8, 16)
+            bottom = block_box[3] if block_box else gb[3]
+            y = bottom + self.mm(8, 16)
         self._jumpers()
         self._distractors()
 
@@ -966,6 +1031,9 @@ class SchematicGenerator:
                        sc, max(1, L - 1))
             self._text(img, "Wiring diagram", (tx0 + self.mm(70), ty0 + self.mm(32)), sc * 0.8)
             self._text(img, "Sheet 1", (tx0 + self.mm(140), ty0 + self.mm(10)), sc * 0.6)
+        for box, _des in self.plan.blocks:
+            _dashed_rect(img, box, max(1, L - 1),
+                         max(3, int(round(self.u * 1.6))), max(2, int(round(self.u * 1.0))))
         for s in self.plan.syms:
             x0, y0 = s.x0, s.y0
             h, w = s.geom.canvas.shape[:2]
@@ -1013,6 +1081,9 @@ class SchematicGenerator:
                           "bbox": list(t.box), "rotation": 0, "mirrored": False,
                           "pins": {str(k): [list(t.pin(k, "L")), list(t.pin(k, "R"))]
                                    for k in range(1, t.cells + 1)}})
+        for box, des in self.plan.blocks:
+            comps.append({"designator": des, "class_name": "device_block", "class_id": 32,
+                          "bbox": list(box), "rotation": 0, "mirrored": False, "pins": {}})
         # электрические связи -> цепи (union-find по именам узлов)
         parent: Dict[str, str] = {}
 

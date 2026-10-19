@@ -62,6 +62,8 @@ CLASS_PREFIXES: Dict[str, Tuple[str, ...]] = {
     "plug_contact": ("XP", "X"),
     "socket_contact": ("XS", "X"),
     "terminal": ("XT", "X"),
+    "fuse_switch": ("F", "FU"),
+    "device_block": ("A", "B"),
 }
 
 # Номера по ГОСТ 2.710 начинаются с 1 (R0, K01 - ошибки OCR, а не обозначения).
