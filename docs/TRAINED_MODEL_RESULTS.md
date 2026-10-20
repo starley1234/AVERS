@@ -78,8 +78,9 @@ mAP50-95 0,956 уже к 4-й эпохе.
 
 ## 5. Синтетика v3 (33 класса): два прогона
 
-Датасет `data/synth_v3` (1200/120 листов, 12 243 тайла, 115 417 объектов),
-обучение `--model yolo11s --imgsz 1024 --batch 12 --device 0`, веса в
+Датасет `data/synth_v3` (1200/120 листов, 12 243 тайла, 115 417 объектов;
+33 класса объявлено, 31 реально рисуется - `pin` и `shield` генератор не
+рисует), обучение `--model yolo11s --imgsz 1024 --batch 12 --device 0`, веса в
 `data/out_real/yolo11s_synth_v3*.pt`. Оценка - `scripts/eval_model.py
 --data data\synth_v3 -n 40 --modes model`.
 

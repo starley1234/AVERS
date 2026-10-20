@@ -162,6 +162,11 @@ venv\Scripts\python.exe scripts\check_model_backend.py weights.pt    # пров�
   раздел «Известные ловушки»).
 * `scripts/eval_model.py` (оценка целыми листами), `scripts/run_real.py`
   (прогон реальных схем с картинками и JSON-сводкой).
+* Веса зарегистрированы в реестре моделей как `v000001` и повышены до текущей:
+  `ModelRegistry(<registry_dir>).register(...)`. Пайплайн (и Web UI) берёт
+  веса из реестра сам (`_resolve_model_path`, `active_learning.registry_dir`),
+  `detection.model_path` остаётся `null`. Откат/смена версии - через
+  `ModelRegistry.promote/rollback`.
 
 ---
 

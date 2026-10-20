@@ -121,7 +121,9 @@ venv\Scripts\python.exe -m avers.dataset.cli train --data data\synth_v2\dataset.
 * `images/{train,val}`, `labels/...`; `truth/{train,val}/*.json` содержит
   эталоны целых листов; `stats.json` даёт число объектов по классам.
 * `dataset.yaml` описывает все 33 класса `DETECTION_CLASSES`. Имена совпадают,
-  поэтому `map_model_classes` подхватывает веса без настройки.
+  поэтому `map_model_classes` подхватывает веса без настройки. Реально в
+  датасете встречается 31 класс: `pin` и `shield` генератор не рисует (они
+  остались от библиотеки v0.1).
 * По умолчанию 70 % листов получают эффекты скана (`--degrade`).
 * **Проверено:** ultralytics принимает датасет (`check_det_dataset`). Обучение
   на CPU `yolo11n`, 1 эпоха на 6 листах (75 тайлов) проходит. Получившиеся
