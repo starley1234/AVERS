@@ -292,6 +292,29 @@ class TestRealSheetClasses:
         assert by_class["device_block"].designator.startswith("A")
         assert set(CLASS_TO_COMPONENT_TYPE) >= {"fuse_switch", "device_block"}
 
+    def test_device_block_and_dots_are_not_erased_from_wires(self):
+        """Рамку блока изделия нельзя вырезать из картинки перед векторизацией.
+
+        Рамка охватывает целую группу: если её вырезать, уходят все провода
+        внутри блока, и на листах с блоками цепей почти не остаётся (было
+        0.59 полноты цепей вместо 0.80 на валидации synth_v3)."""
+        detections = [
+            {"category": "device_block", "bbox": (0, 0, 400, 300), "confidence": 0.9, "pins": []},
+            {"category": "junction_dot", "bbox": (100, 100, 110, 110), "confidence": 0.9, "pins": []},
+            {"category": "resistor", "bbox": (20, 20, 80, 40), "confidence": 0.9, "pins": []},
+        ]
+        boxes = ProductionPipeline._wire_exclusion_boxes(detections)
+        assert boxes == [(20, 20, 80, 40)]
+
+    def test_pins_are_not_blocked_by_device_block_boxes(self):
+        """Рамка блока не должна перекрывать провода в построителе графа."""
+        pipeline = ProductionPipeline()
+        comps = pipeline._components_with_pins([
+            {"category": "device_block", "bbox": (0, 0, 400, 300), "confidence": 0.9, "pins": []},
+        ])
+        # у блока нет выводов - перекрывать провода он не может
+        assert comps[0].pins == []
+
 
 class TestConvenienceFunctions:
     """Tests for convenience functions."""

@@ -1133,10 +1133,30 @@ class ProductionPipeline:
         if self._text_dropped:
             logger.info(f"Detection: {self._text_dropped} candidates inside recognised text dropped")
         # Точки соединения - часть провода: их нельзя вырезать из векторизации.
-        bboxes = [d["bbox"] for d in detections
-                  if d.get("exclude_from_wires", d.get("category") != "junction_dot")]
-        
+        bboxes = self._wire_exclusion_boxes(detections)
+
         return detections, bboxes, detector.backend
+
+    @staticmethod
+    def _wire_exclusion_boxes(detections: List[Dict]) -> List[Tuple[int, int, int, int]]:
+        """Какие рамки детекций вырезать из картинки перед векторизацией.
+
+        Всё, что вырезано, не может стать проводом, поэтому:
+
+        * ``junction_dot`` - это узел на проводе, его вырезать нельзя;
+        * ``device_block`` - штриховая рамка вокруг целой группы. Если вырезать
+          её целиком, уходят все провода внутри блока, а провода, пересекающие
+          рамку, рвутся на две цепи. Отдельные штрихи короткие и всё равно
+          отсеиваются векторизатором как изолированные обрывки.
+        """
+        bboxes: List[Tuple[int, int, int, int]] = []
+        for d in detections:
+            if d.get("category") in ("junction_dot", "device_block"):
+                continue
+            if not d.get("exclude_from_wires", True):
+                continue
+            bboxes.append(d["bbox"])
+        return bboxes
     
     def _group_components(
         self, detections: List[Dict]
@@ -1561,7 +1581,13 @@ class ProductionPipeline:
             stroke_px=float(getattr(self, "_stroke", 2.0) or 2.0),
             junction_points={tuple(p.coord) for c in components
                              if c.type == ComponentType.JUNCTION_DOT for p in c.pins},
-            blocked_boxes=[tuple(c.bbox) for c in components if c.type != ComponentType.JUNCTION_DOT],
+            # Перекрывать провода может только элемент с выводами. Блок изделия
+            # (device_block, штриховой контур вокруг группы) - не элемент цепи:
+            # его рамка охватывает весь узел, и если считать её «заблокированной
+            # областью», из графа выпадают все провода внутри блока и цепей не
+            # остаётся вовсе.
+            blocked_boxes=[tuple(c.bbox) for c in components
+                           if c.type != ComponentType.JUNCTION_DOT and c.pins],
         )
         
         # Add segments

@@ -1,6 +1,6 @@
 ﻿# AGENTS.md — инструкция для коддинг-агентов, работающих в этом репозитории
 
-**НОВАЯ СЕССИЯ: сначала прочитайте `docs/HANDOFF.md`** (состояние прототипа, что не протестировано, план по приоритетам), затем `docs/SYNTHETIC_V2_AND_BENCHMARK.md` (генератор схем v2 и бенчмарк на случайных листах). Windows: `start.cmd` / `stop.cmd`, окружение `venv\`, тесты `venv\Scripts\python.exe -m pytest tests -q` (265 passed). Регрессия: `scripts\stress_demo.py --fake-ocr` и `scripts\bench_synthetic.py --template-only`.
+**НОВАЯ СЕССИЯ: сначала прочитайте `docs/HANDOFF.md`** (состояние прототипа, что не протестировано, план по приоритетам), затем `docs/SYNTHETIC_V2_AND_BENCHMARK.md` (генератор схем v2 и бенчмарк на случайных листах). Windows: `start.cmd` / `stop.cmd`, окружение `venv\`, тесты `venv\Scripts\python.exe -m pytest tests -q` (272 passed). Регрессия: `scripts\stress_demo.py --fake-ocr` и `scripts\bench_synthetic.py --template-only`.
 
 
 Этот файл — чтобы следующий агент (или вы сами на другой машине) не тратил
@@ -61,7 +61,7 @@ Learning Loop. Подробности: `README.md`, `docs_v02.md`, `docs/ACTIVE_
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt            # core deps, ~30 сек, работает без GPU/интернета к ML-хабам
-python -m pytest tests/ -q                 # должно быть "~265 passed" (на момент этой правки; тест с EasyOCR пропускается, если он не установлен) без единой ML-библиотеки
+python -m pytest tests/ -q                 # должно быть "~272 passed" (на момент этой правки; тест с EasyOCR пропускается, если он не установлен) без единой ML-библиотеки
 ```
 
 Это баз для 95% задач (web UI, dataset tools, active learning логика, графы,
@@ -151,7 +151,7 @@ config.yaml        # полный конфиг со всеми секциями,
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests/ -q          # ~265 passed, 0 failed (без ML extras), ~60-100 сек
+python -m pytest tests/ -q          # ~272 passed, 0 failed (без ML extras), ~60-100 сек
 ruff check avers/ --select E9,F821,F823,F811  # реальные баги (не стиль) — должно быть "All checks passed!"
 python -m avers active-learning stats                       # CLI работает
 python -c "from avers.web.app import create_app; create_app()"  # web app собирается
@@ -184,3 +184,12 @@ python -c "from avers.web.app import create_app; create_app()"  # web app соб
   `SystemExit`). Остальные `except Exception: pass` в `avers/web/api.py` и
   др. — осознанный fallback-паттерн (graceful degradation при отсутствии
   RAG/FAISS), трогать не нужно.
+- **Рамка блока изделия (`device_block`) не должна вырезаться из картинки и
+  не должна блокировать провода.** Она охватывает целую группу: если её
+  вырезать перед векторизацией (`_wire_exclusion_boxes`) или положить в
+  `blocked_boxes` построителя графа, из графа уходят все провода внутри блока
+  и рвутся провода, пересекающие рамку. На листах с блоками оставалось 0–2
+  цепи из 30 (полнота цепей на валидации падала 0,84 → 0,59). Сейчас
+  `junction_dot` и `device_block` не вырезаются; штрихи рамки короткие и их
+  всё равно отсеивает векторизатор. Регрессия:
+  `tests/test_production.py::TestRealSheetClasses`.

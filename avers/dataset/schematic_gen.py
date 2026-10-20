@@ -1298,7 +1298,11 @@ def tile_sheet(rgb: np.ndarray, boxes: List[Tuple[int, Box]], tile: int, overlap
             if ix1 <= ix0 or iy1 <= iy0:
                 continue
             area = (bx1 - bx0) * (by1 - by0)
-            if area <= 0 or (ix1 - ix0) * (iy1 - iy0) / area < min_visible:
+            # крупный объект (блок изделия) физически не влезает в тайл:
+            # принимаем и частично видимый, иначе его нет в разметке вовсе
+            need = min_visible * 0.5 if (cid == 32 and max(bx1 - bx0, by1 - by0) > 0.45 * tile) \
+                else min_visible
+            if area <= 0 or (ix1 - ix0) * (iy1 - iy0) / area < need:
                 continue
             kept.append((cid, (ix0 - x0, iy0 - y0, ix1 - x0, iy1 - y0)))
         out.append((crop, kept))
